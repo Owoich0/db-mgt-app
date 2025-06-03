@@ -27,4 +27,4 @@ A self-service platform to **provision**, **connect**, **manage**, and **decommi
 - Ansible
 - AWS CLI (for EC2 + S3 access)
 - SQLite (pre-installed)
-- Docker (optional for local k3s setups)
+- K3s
