@@ -1,0 +1,152 @@
+- name: Add PostgreSQL Yum repo (Rocky, CentOS, Amazon Linux)
+  when: ansible_facts['os_family'] == "RedHat"
+  yum:
+    name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+    state: present
+    disable_gpg_check: yes
+
+- name: Add PostgreSQL APT repo (Ubuntu)
+  when: ansible_facts['os_family'] == "Debian"
+  block:
+    - name: Add PostgreSQL GPG key
+      apt_key:
+        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        state: present
+
+    - name: Add PostgreSQL APT repository
+      apt_repository:
+        repo: "deb http://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+        state: present
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+- name: Disable built-in PostgreSQL module (RedHat family)
+  when: ansible_facts['os_family'] == "RedHat"
+  command: dnf -qy module disable postgresql
+  ignore_errors: true
+
+- name: Install PostgreSQL packages (RedHat)
+  when: ansible_facts['os_family'] == "RedHat"
+  dnf:
+    name:
+      - postgresql{{ postgresql_version }}
+      - postgresql{{ postgresql_version }}-server
+      - postgresql{{ postgresql_version }}-contrib
+    state: present
+
+- name: Install PostgreSQL packages (Ubuntu)
+  when: ansible_facts['os_family'] == "Debian"
+  apt:
+    name:
+      - postgresql-{{ postgresql_version }}
+      - postgresql-contrib
+    state: present
+    update_cache: yes
+
+- name: Ensure PGDATA exists (RedHat)
+  file:
+    path: /var/lib/pgsql/{{ postgresql_version }}/data
+    owner: postgres
+    group: postgres
+    recurse: yes
+    state: directory
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Ensure PGDATA exists (Ubuntu)
+  file:
+    path: /var/lib/postgresql/{{ postgresql_version }}/main
+    owner: postgres
+    group: postgres
+    recurse: yes
+    state: directory
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Ensure WAL archive mount and subdir is owned by postgres
+  file:
+    path: /var/lib/pgsql/wal/archive
+    owner: postgres
+    group: postgres
+    recurse: yes
+    state: directory
+
+- name: Initialize DB (RedHat)
+  become: true
+  command: "/usr/pgsql-{{ postgresql_version }}/bin/postgresql-{{ postgresql_version }}-setup initdb"
+  args:
+    creates: "/var/lib/pgsql/{{ postgresql_version }}/data/PG_VERSION"
+  when:
+    - instance_count | int == 1
+    - ansible_facts['os_family'] == "RedHat"
+
+- name: Initialize DB (Ubuntu)
+  become: true
+  become_user: postgres
+  command: "/usr/lib/postgresql/{{ postgresql_version }}/bin/initdb -D /var/lib/postgresql/{{ postgresql_version }}/main"
+  args:
+    creates: "/var/lib/postgresql/{{ postgresql_version }}/main/PG_VERSION"
+  when:
+    - instance_count | int == 1
+    - ansible_facts['os_family'] == "Debian"
+
+- name: Start PostgreSQL service (RedHat)
+  systemd:
+    name: postgresql-{{ postgresql_version }}
+    enabled: true
+    state: started
+  when:
+    - instance_count | int == 1
+    - ansible_facts['os_family'] == "RedHat"
+
+- name: Start PostgreSQL service (Ubuntu)
+  systemd:
+    name: postgresql
+    enabled: true
+    state: started
+  when:
+    - instance_count | int == 1
+    - ansible_facts['os_family'] == "Debian"
+
+- name: Apply PostgreSQL config for standalone
+  become: true
+  lineinfile:
+    path: "{{ '/var/lib/pgsql/' + postgresql_version|string + '/data/postgresql.conf' if ansible_facts['os_family'] == 'RedHat' else '/var/lib/postgresql/' + postgresql_version|string + '/main/postgresql.conf' }}"
+    regexp: "^{{ item.name }} ="
+    line: "{{ item.name }} = {{ item.value }}"
+    state: present
+    backup: yes
+  loop:
+    - { name: wal_level, value: 'replica' }
+    - { name: archive_mode, value: 'on' }
+    - { name: archive_command, value: "'pgbackrest --stanza={{ pgbackrest_stanza }} archive-push %p'" }
+    - { name: max_wal_senders, value: '10' }
+    - { name: wal_keep_size, value: "'64MB'" }
+    - { name: hot_standby, value: 'on' }
+    - { name: listen_addresses, value: "'*'" }
+  notify: Restart PostgreSQL
+  when: instance_count | int == 1
+
+- name: Allow IP 1 in pg_hba.conf
+  lineinfile:
+    path: "{{ ('/var/lib/pgsql/' ~ postgresql_version|string ~ '/data/pg_hba.conf') if ansible_facts['os_family'] == 'RedHat' else ('/etc/postgresql/' ~ postgresql_version|string ~ '/main/pg_hba.conf') }}"
+    line: "host    all             all             {{ allowed_ip_1 }}         md5"
+    insertafter: EOF
+  when: instance_count | int == 1
+  notify: Restart PostgreSQL
+
+- name: Allow IP 2 in pg_hba.conf
+  lineinfile:
+    path: "{{ ('/var/lib/pgsql/' ~ postgresql_version|string ~ '/data/pg_hba.conf') if ansible_facts['os_family'] == 'RedHat' else ('/etc/postgresql/' ~ postgresql_version|string ~ '/main/pg_hba.conf') }}"
+    line: "host    all             all             {{ allowed_ip_2 }}         md5"
+    insertafter: EOF
+  when: instance_count | int == 1
+  notify: Restart PostgreSQL
+
+- name: Allow server public IP in pg_hba.conf
+  lineinfile:
+    path: "{{ ('/var/lib/pgsql/' ~ postgresql_version|string ~ '/data/pg_hba.conf') if ansible_facts['os_family'] == 'RedHat' else ('/etc/postgresql/' ~ postgresql_version|string ~ '/main/pg_hba.conf') }}"
+    line: "host    all             all             {{ server_public_ip }}/32         md5"
+    insertafter: EOF
+  when: instance_count | int == 1
+  notify: Restart PostgreSQL

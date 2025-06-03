@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: patroni-config
+  namespace: default
+data:
+  patroni.yml: |
+    scope: postgresql-cluster
+    name: {{ inventory_hostname }}
+    namespace: /service/
+
+    restapi:
+      listen: {{ hostvars[inventory_hostname]['private_ip'] }}:8008
+      connect_address: {{ hostvars[inventory_hostname]['private_ip'] }}:8008
+
+    etcd3:
+      hosts: {% for host in groups['postgresql'] -%}
+        {{ hostvars[host]['private_ip'] }}:2379{% if not loop.last %},{% endif %}
+      {%- endfor %}
+
+    {% if bootstrap_node | default(false) %}
+    bootstrap:
+      dcs:
+        ttl: 30
+        loop_wait: 10
+        retry_timeout: 10
+        maximum_lag_on_failover: 1048576
+        postgresql:
+          parameters:
+            wal_level: replica
+            hot_standby: "on"
+            wal_log_hints: "on"
+            archive_mode: "on"
+            archive_command: '/usr/bin/pgbackrest --config=/etc/pgbackrest/pgbackrest.conf --stanza=main archive-push %p'
+            archive_timeout: 300
+            max_wal_senders: 10
+            wal_keep_size: 256MB
+            wal_compression: on
+            password_encryption: scram-sha-256
+      initdb:
+        - encoding: UTF8
+        - data-checksums
+      users:
+        postgres:
+          password: "{{ patroni_superuser_password }}"
+          options:
+            - superuser
+            - createdb
+        "{{ patroni_replication_user }}":
+          password: "{{ patroni_replication_password }}"
+          options:
+            - replication
+    {% endif %}
+
+    pg_hba:
+      - host replication {{ patroni_replication_user }} 127.0.0.1/32 scram-sha-256
+    {% for host in groups['postgresql'] %}
+      - host replication {{ patroni_replication_user }} {{ hostvars[host]['private_ip'] }}/32 scram-sha-256
+    {% endfor %}
+      - host all all 127.0.0.1/32 scram-sha-256
+      - host all all ::1/128 scram-sha-256
+    {% for host in groups['postgresql'] %}
+      - host all all {{ hostvars[host]['private_ip'] }}/32 scram-sha-256
+    {% endfor %}
+      - host all all 10.0.0.0/16 scram-sha-256
+
+    postgresql:
+      listen: {{ hostvars[inventory_hostname]['private_ip'] }}:{{ postgres_port }}
+      connect_address: {{ hostvars[inventory_hostname]['private_ip'] }}:{{ postgres_port }}
+      data_dir: {{ data_mount_point }}/pgdata
+      bin_dir: /usr/pgsql-{{ postgresql_version }}/bin
+      authentication:
+        superuser:
+          username: postgres
+          password: "{{ patroni_superuser_password }}"
+        replication:
+          username: {{ patroni_replication_user }}
+          password: {{ patroni_replication_password }}
+      parameters:
+        unix_socket_directories: '/var/run/postgresql'
+        stats_temp_directory: /var/lib/pgsql_stats_tmp
+        wal_level: replica
+        hot_standby: 'on'
+        wal_log_hints: 'on'
+        archive_mode: 'on'
+        archive_command: '/usr/bin/pgbackrest --stanza=main archive-push %p'
+        archive_timeout: 300
+        wal_compression: on
+        wal_keep_size: 256MB
+        max_wal_senders: 10
+        max_replication_slots: 10
+        synchronous_commit: 'on'
+        synchronous_standby_names: '*'
+        password_encryption: scram-sha-256
+
+      create_replica_methods:
+        - basebackup
+      basebackup:
+        max-rate: '100M'
+        checkpoint: 'fast'
+
+      recovery_conf:
+        restore_command: '/usr/bin/pgbackrest --stanza=main archive-get %f "%p"'
+
+    tags:
+      nofailover: false
+      noloadbalance: false
+      clonefrom: false
+      nosync: false

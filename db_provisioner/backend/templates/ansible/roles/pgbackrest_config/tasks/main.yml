@@ -1,0 +1,110 @@
+
+- name: Try Patroni API on each node to get cluster JSON
+  uri:
+    url: "http://{{ hostvars[item]['private_ip'] }}:8008/cluster"
+    return_content: true
+  delegate_to: "{{ groups['postgresql'][0] }}"
+  run_once: true
+  become: false
+  loop: "{{ groups['postgresql'] }}"
+  register: cluster_api_results
+
+
+
+
+- name: Extract leader IP from Patroni API responses
+  set_fact:
+    leader_ip: >-
+      {{
+        cluster_api_results.results
+        | map(attribute='content')
+        | map('from_json')
+        | select('defined')
+        | map(attribute='members')
+        | flatten
+        | selectattr('role', 'equalto', 'leader')
+        | map(attribute='host')
+        | first
+      }}
+  run_once: true
+
+
+
+- name: Configure pgBackRest for S3
+  template:
+    src: pgbackrest.conf.j2
+    dest: /etc/pgbackrest/pgbackrest.conf
+    owner: postgres
+    group: postgres
+    mode: '0640'
+
+- name: Copy backup script
+  copy:
+    src: run_backup_if_replica.sh
+    dest: /usr/local/bin/run_backup_if_replica.sh
+    mode: '0755'
+    owner: postgres
+    group: postgres
+
+- name: Schedule full weekly backups
+  cron:
+    name: "Weekly full backup"
+    user: postgres
+    job: '/usr/local/bin/run_backup_if_replica.sh full >> /var/log/pgbackrest/full_$(date +\%F).log 2>&1'
+    minute: "0"
+    hour: "1"
+    weekday: "0"
+
+- name: Schedule daily incremental backups
+  cron:
+    name: "Daily incremental backup"
+    user: postgres
+    job: '/usr/local/bin/run_backup_if_replica.sh incr >> /var/log/pgbackrest/incr_$(date +\%F).log 2>&1'
+    minute: "0"
+    hour: "1"
+    weekday: "1-6"
+
+- name: Cleanup old pgBackRest logs
+  cron:
+    name: "Cleanup old pgBackRest logs"
+    user: postgres
+    job: 'find /var/log/pgbackrest/ -type f -name "*.log" -mtime +14 -delete'
+    minute: "0"
+    hour: "2"
+
+- name: Check if this node is a replica
+  become: true
+  become_user: postgres
+  command: psql -tAc "SELECT pg_is_in_recovery();"
+  register: is_replica
+  changed_when: false
+
+- name: Create pgBackRest stanza (only on designated replica)
+  become: true
+  become_user: postgres
+  command: /usr/bin/pgbackrest --stanza=main stanza-create
+  when:
+    - is_replica.stdout == 't'
+    - inventory_hostname == (groups['postgresql'] | sort)[0]
+  register: stanza_result
+  failed_when:
+    - stanza_result.rc != 0
+    - "'already exists' not in stanza_result.stdout"
+
+
+
+
+# - name: Run stanza-create only on the Patroni leader
+#   become_user: postgres
+#   shell: |
+#     IP="{{ hostvars[inventory_hostname]['private_ip'] }}"
+#     if curl -s "http://${IP}:8008" | grep -q '"role": "leader"'; then
+#       pgbackrest --stanza=main stanza-create
+#     else
+#       echo "Skipping: Not leader"
+#     fi
+#   args:
+#     executable: /bin/bash
+#   register: stanza_result
+#   changed_when: "'stanza-create command end' in stanza_result.stdout"
+#   failed_when: stanza_result.rc != 0 and "'Skipping' not in stanza_result.stdout"

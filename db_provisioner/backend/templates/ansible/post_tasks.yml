@@ -1,0 +1,28 @@
+- name: Display HA Cluster Summary
+  debug:
+    msg: |
+      ===============================
+       High Availability Cluster Summary
+      ===============================
+
+      ▪ Keepalived
+        - auth_pass           : {{ keepalived_auth_pass }}
+        - Virtual IP          : {{ keepalived_virtual_ip }}
+
+      ▪ HAProxy
+        - Listen Port         : {{ haproxy_listen_port }}
+
+      ▪ PostgreSQL
+        - Port                : {{ hostvars[groups['postgresql'][0]].postgres_port }}
+        - Superuser Password  : {{ hostvars[groups['postgresql'][0]].patroni_superuser_password }}
+        - Replication Password: {{ hostvars[groups['postgresql'][0]].patroni_replication_password }}
+        - Replication User: {{ patroni_replication_username }}
+
+      ▪ Cluster Nodes:
+      {% for node in groups['postgresql'] %}
+        - {{ node }}:
+            Private IP : {{ hostvars[node].private_ip }}
+            Public IP  : {{ hostvars[node].ansible_host }}
+      {% endfor %}
+
+      ===============================

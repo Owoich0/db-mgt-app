@@ -1,0 +1,5 @@
+- name: Stop PostgreSQL
+  become: true
+  systemd:
+    name: postgresql-{{ postgresql_version }}
+    state: stopped

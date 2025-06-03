@@ -1,0 +1,15 @@
+- name: Drop PostgreSQL database (standalone)
+  hosts: postgresql
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: Drop PostgreSQL database on RedHat-based systems
+      become_user: postgres
+      command: "/usr/pgsql-{{ postgresql_version }}/bin/psql -c \"DROP DATABASE IF EXISTS {{ db_name }};\""
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Drop PostgreSQL database on Debian-based systems
+      become_user: postgres
+      command: "/usr/lib/postgresql/{{ postgresql_version }}/bin/psql -c \"DROP DATABASE IF EXISTS {{ db_name }};\""
+      when: ansible_facts['os_family'] == "Debian"

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Delete Cluster</title>
+    <script>
+        async function loadClusters() {
+            const res = await fetch("http://localhost:8000/clusters");
+            const data = await res.json();
+            const select = document.getElementById("clusterSelect");
+            data.clusters.forEach(cluster => {
+                const option = document.createElement("option");
+                option.value = cluster;
+                option.text = cluster;
+                select.appendChild(option);
+            });
+        }
+
+        async function deleteCluster() {
+            const cluster = document.getElementById("clusterSelect").value;
+            if (!cluster) return alert("Select a cluster");
+            const res = await fetch(`http://localhost:8000/destroy?cluster=${cluster}`, {
+                method: "POST"
+            });
+            const data = await res.json();
+            alert(JSON.stringify(data));
+            location.reload();
+        }
+
+        window.onload = loadClusters;
+    </script>
+</head>
+<body>
+    <h2>Delete a Cluster</h2>
+    <select id="clusterSelect">
+        <option value="">-- Choose Cluster --</option>
+    </select>
+    <button onclick="deleteCluster()">Delete</button>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+local   all             all                                     peer
+host    all             all             127.0.0.1/32            md5
+host    all             all             ::1/128                 md5
+host    all             all             {{ allowed_ip_1 }}/32   md5
+host    all             all             {{ allowed_ip_2 }}/32   md5
+host    all             all             {{ server_public_ip }}/32 md5

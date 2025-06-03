@@ -1,0 +1,18 @@
+cluster_name       = "{{ cluster_name }}"
+instance_count     = {{ instance_count }}
+ami                = "{{ ami }}"
+instance_type      = "{{ instance_type }}"
+data_volume_size   = {{ data_volume_size }}
+ssh_user           = "{{ ssh_user }}"
+key_name           = "{{ key_name }}"
+public_key_path    = "{{ public_key_path }}"
+postgres_version = "{{ postgres_version }}"
+platform = "{{ platform }}"
+{% if platform == 'kubernetes' %}
+pod_count = {{ pod_count }}
+{% endif %}
+allowed_ip_1 = "{{ allowed_ip_1 }}"
+allowed_ip_2 = "{{ allowed_ip_2 }}"
+k8s_node_count = {{ k8s_node_count | default(1) }}
+
+

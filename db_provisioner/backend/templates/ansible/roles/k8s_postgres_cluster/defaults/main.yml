@@ -1,0 +1,7 @@
+postgres_image: postgres:15
+postgres_user: postgres
+postgres_password: "{{ patroni_superuser_password }}"
+postgres_storage_size: 1Gi
+postgres_port: 5432
+postgres_replicas: "{{ pod_count }}"
+k8s_node_count: 1  # Default

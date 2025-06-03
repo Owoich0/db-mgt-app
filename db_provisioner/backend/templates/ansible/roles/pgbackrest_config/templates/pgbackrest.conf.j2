@@ -1,0 +1,27 @@
+[global]
+repo1-type={{ pgbackrest_repo_type }}
+repo1-path={{ pgbackrest_repo_path }}
+repo1-s3-bucket={{ pgbackrest_s3_bucket }}
+repo1-s3-endpoint={{ pgbackrest_s3_endpoint }}
+repo1-s3-region={{ pgbackrest_s3_region }}
+repo1-s3-key={{ aws_access_key_id }}
+repo1-s3-key-secret={{ aws_secret_access_key }}
+repo1-storage-verify-tls={{ pgbackrest_s3_verify_ssl }}
+repo1-retention-full={{ pgbackrest_retention_full }}
+repo1-retention-diff={{ pgbackrest_retention_diff }}
+log-level-console=info
+log-level-file=detail
+log-path=/var/log/pgbackrest
+start-fast=y
+compress-level=3
+process-max=4
+delta=y
+
+[main]
+pg1-path={{ data_mount_point }}/pgdata
+pg1-port={{ postgres_port }}
+{% if ansible_default_ipv4.address != leader_ip %}
+pg1-host={{ leader_ip }}
+pg2-path={{ data_mount_point }}/pgdata
+pg2-port={{ postgres_port }}
+{% endif %}

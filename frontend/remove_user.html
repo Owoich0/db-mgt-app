@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Remove User</title>
+  <style>
+    body { font-family: sans-serif; background: #f0f0f0; padding: 40px; }
+    .container { max-width: 400px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    h2 { text-align: center; }
+    label { display: block; margin-top: 12px; }
+    input, button { width: 100%; padding: 8px; margin-top: 5px; margin-bottom: 15px; }
+    button { background: #ff851b; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { background: #cc6c14; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Remove Database User</h2>
+    <form id="removeUserForm">
+      <label>Cluster Name
+        <input type="text" name="cluster" required>
+      </label>
+      <label>Username
+        <input type="text" name="username" required>
+      </label>
+      <button type="submit">Remove User</button>
+    </form>
+    <p id="message"></p>
+  </div>
+
+  <script>
+    document.getElementById("removeUserForm").addEventListener("submit", async function(e) {
+      e.preventDefault();
+      const form = e.target;
+      const data = {
+        cluster: form.cluster.value,
+        username: form.username.value
+      };
+      const msg = document.getElementById("message");
+
+      msg.textContent = "Removing user...";
+
+      try {
+        const res = await fetch("http://localhost:8000/remove_user", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(data)
+        });
+
+        const result = await res.json();
+        msg.textContent = res.ok ? `User '${data.username}' removed.` : `Error: ${result.detail}`;
+      } catch (err) {
+        msg.textContent = "Failed to send remove user request.";
+      }
+    });
+  </script>
+</body>
+</html>

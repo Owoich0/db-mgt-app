@@ -1,0 +1,19 @@
+- name: Wait for etcd to be healthy (all nodes)
+  command: >
+    /usr/local/bin/etcdctl --endpoints={{ item }} endpoint health
+  loop:
+    - "http://{{ hostvars['postgres-node-1']['private_ip'] }}:2379"
+    - "http://{{ hostvars['postgres-node-2']['private_ip'] }}:2379"
+    - "http://{{ hostvars['postgres-node-3']['private_ip'] }}:2379"
+  register: etcd_health
+  retries: 10
+  delay: 5
+  until: etcd_health.stdout is defined and 'is healthy' in etcd_health.stdout
+  changed_when: false
+
+
+
+
+- name: Show etcd health check results
+  debug:
+    var: etcd_health.results

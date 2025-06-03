@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+  labels:
+    app: haproxy
+data:
+  haproxy.cfg: |
+    global
+        log stdout format raw daemon
+
+    defaults
+        log     global
+        mode    tcp
+        option  tcplog
+        timeout connect 10s
+        timeout client  1m
+        timeout server  1m
+
+    # Frontend for RW (leader)
+    frontend postgres_rw
+        bind *:{{ haproxy_listen_port }}
+        default_backend rw_backend
+
+    # Backend that forwards traffic only to the leader pod
+    backend rw_backend
+        option httpchk GET /read-write
+        http-check expect status 200
+{% for i in range(pod_count | int) %}
+        server patroni-{{ i }} patroni-{{ i }}.patroni.{{ namespace | default('default') }}.svc.cluster.local:{{ postgres_port }} check port 8008
+{% endfor %}
+
+    # Frontend for RO (replicas)
+    frontend postgres_ro
+        bind *:{{ haproxy_listen_port | int + 1 }}
+        default_backend ro_backend
+
+    # Backend with all nodes for load-balanced reads
+    backend ro_backend
+        balance roundrobin
+        option httpchk GET /read-only
+        http-check expect status 200
+{% for i in range(pod_count | int) %}
+        server patroni-{{ i }} patroni-{{ i }}.patroni.{{ namespace | default('default') }}.svc.cluster.local:{{ postgres_port }} check port 8008
+{% endfor %}

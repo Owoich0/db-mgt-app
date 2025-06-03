@@ -1,0 +1,11 @@
+#!/bin/bash
+PORT={{ haproxy_listen_port | default(5432) }}
+if ! pidof haproxy > /dev/null; then
+    echo "HAProxy is not running"
+    exit 1
+fi
+if ! ss -ltn | grep -q ":${PORT}"; then
+    echo "HAProxy is not listening on port ${PORT}"
+    exit 2
+fi
+exit 0

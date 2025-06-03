@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Start Database</title>
+  <style>
+    body { font-family: sans-serif; background: #f0f0f0; padding: 40px; }
+    .container { max-width: 400px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    h2 { text-align: center; }
+    label { display: block; margin-top: 12px; }
+    input, button { width: 100%; padding: 8px; margin-top: 5px; margin-bottom: 15px; }
+    button { background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { background: #1e7e34; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Start Database</h2>
+    <form id="startForm">
+      <label>Cluster Name
+        <input type="text" name="name" required>
+      </label>
+      <button type="submit">Start Database</button>
+    </form>
+    <p id="message"></p>
+  </div>
+
+  <script>
+    document.getElementById("startForm").addEventListener("submit", async function(e) {
+      e.preventDefault();
+      const form = e.target;
+      const clusterName = form.name.value;
+      const msg = document.getElementById("message");
+
+      msg.textContent = "Starting database...";
+
+      try {
+        const res = await fetch(`http://localhost:8000/start/${clusterName}`, {
+          method: "POST"
+        });
+
+        const result = await res.json();
+        msg.textContent = res.ok ? `Database started for cluster: ${clusterName}` : `Error: ${result.detail}`;
+      } catch (err) {
+        msg.textContent = "Failed to send start request.";
+      }
+    });
+  </script>
+</body>
+</html>

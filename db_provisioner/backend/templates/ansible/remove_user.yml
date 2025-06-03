@@ -1,0 +1,7 @@
+- hosts: postgresql
+  become: true
+  tasks:
+    - name: Drop PostgreSQL user
+      become_user: postgres
+      shell: |
+        psql -d postgres -c "DROP USER IF EXISTS {{ db_user }};"

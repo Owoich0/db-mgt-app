@@ -1,0 +1,26 @@
+
+- name: Install HAProxy
+  package:
+    name: haproxy
+    state: present
+
+- name: Allow HAProxy to connect to any port via SELinux
+  seboolean:
+    name: haproxy_connect_any
+    state: true
+    persistent: yes
+  become: true
+
+- name: Deploy HAProxy configuration
+  template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable and start HAProxy
+  systemd:
+    name: haproxy
+    enabled: yes
+    state: restarted

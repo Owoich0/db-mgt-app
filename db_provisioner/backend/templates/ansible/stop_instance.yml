@@ -1,0 +1,62 @@
+---
+- name: Update IP and stop PostgreSQL instance
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+
+  tasks:
+    - name: Get latest public IP from AWS
+      shell: |
+        aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values={{ cluster_name }}-node-1" \
+          --query "Reservations[].Instances[].PublicIpAddress" \
+          --output text
+      register: public_ip_result
+
+    - name: Set new public IP
+      set_fact:
+        new_public_ip: "{{ public_ip_result.stdout | trim }}"
+
+    - name: Update ansible_host IP only for this host
+      lineinfile:
+        path: inventory/inventory.ini
+        regexp: '^({{ inventory_hostname }} .*ansible_host=)[^ ]+'
+        line: '\1{{ new_public_ip }}'
+        backrefs: yes
+
+    - name: Update public_ip_1 in SQLite DB
+      delegate_to: localhost
+      run_once: true
+      shell: >
+        python3 -c "import sqlite3; conn = sqlite3.connect('/Users/mac/Documents/E-Library/Automation/dbLifeMgt/db_provisioner/backend/clusters.db'); cursor = conn.cursor(); cursor.execute('UPDATE clusters SET public_ip_1=? WHERE cluster_name=?', ('{{ new_public_ip }}', '{{ cluster_name }}')); conn.commit(); conn.close()"
+
+    - name: Wait for SSH to be available
+      wait_for:
+        port: 22
+        host: "{{ new_public_ip }}"
+        timeout: 180
+
+
+
+- name: Stop PostgreSQL on standalone instance
+  hosts: postgresql
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: Show OS details
+      debug:
+        msg: "Detected OS: {{ ansible_facts['os_family'] }}, PG Version: {{ postgresql_version }}"
+
+    - name: Stop PostgreSQL service on RedHat-based systems
+      ansible.builtin.systemd:
+        name: "postgresql-{{ postgresql_version }}"
+        state: stopped
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Stop PostgreSQL service on Ubuntu
+      ansible.builtin.systemd:
+        name: postgresql
+        state: stopped
+      when: ansible_facts['os_family'] == "Debian"

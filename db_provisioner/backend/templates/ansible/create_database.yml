@@ -1,0 +1,27 @@
+---
+- name: Create PostgreSQL database
+  hosts: postgresql
+  become: true
+  vars:
+    db_name: "{{ db_name }}"
+  tasks:
+    - name: Ensure PostgreSQL client tools are installed (RedHat)
+      when: ansible_facts['os_family'] == 'RedHat'
+      package:
+        name:
+          - postgresql
+        state: present
+
+    - name: Ensure PostgreSQL client tools are installed (Debian)
+      when: ansible_facts['os_family'] == 'Debian'
+      apt:
+        name: postgresql-client
+        update_cache: yes
+        state: present
+
+    - name: Create database using Ansible module
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: "{{ db_name }}"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3

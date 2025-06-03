@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: keepalived
+spec:
+  selector:
+    matchLabels:
+      name: keepalived
+  template:
+    metadata:
+      labels:
+        name: keepalived
+    spec:
+      hostNetwork: true
+      containers:
+      - name: keepalived
+        image: osixia/keepalived:2.0.20
+        securityContext:
+          capabilities:
+            add:
+              - NET_ADMIN
+        volumeMounts:
+          - name: config
+            mountPath: /etc/keepalived
+      volumes:
+        - name: config
+          configMap:
+            name: keepalived-config

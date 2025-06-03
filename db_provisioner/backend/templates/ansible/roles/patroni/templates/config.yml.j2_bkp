@@ -1,0 +1,84 @@
+
+scope: postgresql-cluster
+name: {{ inventory_hostname }}
+namespace: /service/
+
+restapi:
+  listen: {{ ansible_host }}:8008
+  connect_address: {{ ansible_host }}:8008
+
+etcd3:
+  hosts: {% for host in groups['postgresql'] %}{{ hostvars[host]['private_ip'] }}:2379{% if not loop.last %},{% endif %}{% endfor %}
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    master_start_timeout: 300
+    synchronous_mode: true
+    synchronous_node_count: 2
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_keep_size: 64
+        synchronous_commit: "on"
+        synchronous_standby_names: '1'
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+  pg_hba:
+    - host replication replicator 127.0.0.1/32 scram-sha-256
+    {% for host in groups['postgresql'] %}
+    - host replication replicator {{ hostvars[host].private_ip }}/32 scram-sha-256
+    {% endfor %}
+    - host all all 127.0.0.1/32 scram-sha-256
+
+postgresql:
+  listen: {{ hostvars[inventory_hostname]['private_ip'] }}:5432
+  connect_address: {{ hostvars[inventory_hostname]['private_ip'] }}:5432
+  data_dir: /var/lib/pgsql/data
+  bin_dir: /usr/pgsql-{{ postgresql_version }}/bin
+  authentication:
+    superuser:
+      username: postgres
+      password: "{{ patroni_postgres_password }}"
+    replication:
+      username: replicator
+      password: "{{ patroni_replication_password }}"
+  parameters:
+    unix_socket_directories: '/var/run/postgresql'
+    stats_temp_directory: /var/lib/pgsql_stats_tmp
+    wal_log_hints: 'on'
+    archive_mode: 'on'
+    archive_command: 'cp %p /var/lib/pgsql/wal/archive/%f'
+    wal_level: replica
+    hot_standby: 'on'
+    max_wal_senders: 10
+    max_replication_slots: 10
+    wal_keep_size: 64
+    synchronous_commit: 'on'
+    synchronous_standby_names: '*'
+
+  create_replica_methods:
+    - basebackup
+  basebackup:
+    max-rate: '100M'
+    checkpoint: 'fast'
+
+  recovery_conf:
+    restore_command: 'cp /var/lib/pgsql/wal/archive/%f %p'
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

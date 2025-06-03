@@ -1,0 +1,32 @@
+- name: Install Keepalived
+  package:
+    name: keepalived
+    state: present
+
+- name: Deploy Keepalived health check script
+  template:
+    src: check_haproxy.sh.j2
+    dest: /etc/keepalived/check_haproxy.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ensure keepalived_script user exists
+  user:
+    name: keepalived_script
+    system: yes
+    shell: /sbin/nologin
+
+- name: Deploy Keepalived configuration
+  template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable and start Keepalived
+  systemd:
+    name: keepalived
+    enabled: yes
+    state: restarted

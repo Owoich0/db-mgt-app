@@ -1,0 +1,27 @@
+- name: Check PostgreSQL service status across OS families
+  hosts: postgresql
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Determine PostgreSQL service name
+      set_fact:
+        postgres_service_name: >-
+          {{
+            ('postgresql-' ~ postgresql_version)
+            if ansible_facts['os_family'] == 'RedHat'
+            else 'postgresql'
+          }}
+
+    - name: Check PostgreSQL service status
+      command: systemctl is-active {{ postgres_service_name }}
+      register: postgres_service_status
+      ignore_errors: true
+
+    - name: Set is_running fact
+      set_fact:
+        is_running: "{{ 'true' if postgres_service_status.rc == 0 else 'false' }}"
+
+    - name: Print service status for FastAPI to parse
+      debug:
+        msg: "is_running={{ is_running }}"

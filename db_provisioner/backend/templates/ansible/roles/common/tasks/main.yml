@@ -1,0 +1,83 @@
+---
+- name: Remove conflicting curl-minimal if present
+  ansible.builtin.yum:
+    name: curl-minimal
+    state: absent
+  ignore_errors: true
+
+
+- name: Ensure base system packages are installed
+  package:
+    name:
+      - python3
+      - python3-pip
+      - gcc
+      - libffi-devel
+      - openssl-devel
+      - python3-devel
+      - policycoreutils
+      - libselinux-utils
+      - xfsprogs
+      - acl
+      - wget
+      - curl
+      - tar
+      - gzip
+      - epel-release
+    state: present
+
+- name: Upgrade pip, setuptools, and wheel
+  pip:
+    name:
+      - pip
+      - setuptools
+      - wheel
+    executable: pip3
+    state: latest
+  ignore_errors: true
+
+- name: Install psycopg2-binary
+  pip:
+    name: psycopg2-binary
+    executable: pip3
+
+- name: Install cryptography library for Python
+  pip:
+    name: cryptography>=1.2.3
+    executable: pip3
+
+- name: Add cluster nodes to /etc/hosts dynamically
+  lineinfile:
+    path: /etc/hosts
+    line: "{{ hostvars[item].ansible_host }} {{ item }}"
+    state: present
+  loop: "{{ groups['postgresql'] }}"
+
+- name: Create /var/lib/pgsql parent directory
+  file:
+    path: /var/lib/pgsql
+    state: directory
+    mode: '0755'
+
+- name: Ensure /var/lib/pgsql/data exists
+  file:
+    path: /var/lib/pgsql/data
+    state: directory
+    mode: '0755'
+
+- name: Ensure /var/lib/pgsql/wal exists
+  file:
+    path: /var/lib/pgsql/wal
+    state: directory
+    mode: '0755'
+
+- name: Mount all configured entries from fstab (data + wal)
+  command: mount -a
+  register: mount_result
+  changed_when: mount_result.rc == 0
+  failed_when: mount_result.rc != 0
+
+- name: Set node IPs as facts
+  set_fact:
+    public_ip: "{{ ansible_host }}"
+    private_ip: "{{ ansible_default_ipv4.address }}"

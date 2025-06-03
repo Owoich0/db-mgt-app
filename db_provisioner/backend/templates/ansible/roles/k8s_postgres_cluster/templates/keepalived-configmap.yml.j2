@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keepalived-config
+data:
+  keepalived.conf: |
+    vrrp_instance VI_1 {
+      state MASTER
+      interface {{ network_interface }}
+      virtual_router_id 51
+      priority 100
+      advert_int 1
+      authentication {
+          auth_type PASS
+          auth_pass {{ keepalived_auth_pass }}
+      }
+      virtual_ipaddress {
+          {{ keepalived_virtual_ip }}
+      }
+    }

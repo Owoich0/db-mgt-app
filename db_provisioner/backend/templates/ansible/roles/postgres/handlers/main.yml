@@ -1,0 +1,6 @@
+- name: Restart PostgreSQL
+  become: true
+  systemd:
+    name: "{{ ('postgresql-' ~ postgresql_version|string) if ansible_facts['os_family'] == 'RedHat' else 'postgresql' }}"
+    state: restarted
+    enabled: true

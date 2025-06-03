@@ -1,0 +1,15 @@
+- name: List user-created databases
+  hosts: postgresql
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: List databases excluding default ones
+      become_user: postgres
+      shell: |
+        psql -tAc "SELECT datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres')"
+      register: db_list_output
+
+    - name: Print for backend
+      debug:
+        msg: "{{ db_list_output.stdout_lines }}"

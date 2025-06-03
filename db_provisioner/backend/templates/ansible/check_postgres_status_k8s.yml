@@ -1,0 +1,25 @@
+- name: Check PostgreSQL health in Kubernetes
+  hosts: postgresql
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Get PostgreSQL pod name
+      shell: /usr/local/bin/k3s kubectl get pods -l app=postgres -o jsonpath="{.items[0].metadata.name}"
+      register: pod_name
+      failed_when: pod_name.rc != 0
+      changed_when: false
+
+    - name: Check PostgreSQL health inside pod
+      shell: |
+        /usr/local/bin/k3s kubectl exec {{ pod_name.stdout }} -- psql -U postgres -c "SELECT 1"
+      register: pg_health
+      changed_when: false
+      failed_when: false
+
+    - name: Set fact for DB health
+      set_fact:
+        db_status: "{{ 'healthy' if pg_health.rc == 0 else 'unreachable' }}"
+
+    - name: Show DB health
+      debug:
+        msg: "db_status={{ db_status }}"

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Restart Cluster</title>
+  <style>
+    body { font-family: sans-serif; background: #f0f0f0; padding: 40px; }
+    .container { max-width: 400px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    h2 { text-align: center; }
+    label { display: block; margin-top: 12px; }
+    input, button { width: 100%; padding: 8px; margin-top: 5px; margin-bottom: 15px; }
+    button { background: #17a2b8; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { background: #117a8b; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Restart Cluster</h2>
+    <form id="restartForm">
+      <label>Cluster Name
+        <input type="text" name="name" required>
+      </label>
+      <button type="submit">Restart Cluster</button>
+    </form>
+    <p id="message"></p>
+  </div>
+
+  <script>
+    document.getElementById("restartForm").addEventListener("submit", async function(e) {
+      e.preventDefault();
+      const form = e.target;
+      const clusterName = form.name.value;
+      const msg = document.getElementById("message");
+
+      msg.textContent = "Restarting cluster...";
+
+      try {
+        const res = await fetch(`http://localhost:8000/restart/${clusterName}`, {
+          method: "POST"
+        });
+
+        const result = await res.json();
+        msg.textContent = res.ok ? `Cluster '${clusterName}' restarted.` : `Error: ${result.detail}`;
+      } catch (err) {
+        msg.textContent = "Failed to send restart request.";
+      }
+    });
+  </script>
+</body>
+</html>

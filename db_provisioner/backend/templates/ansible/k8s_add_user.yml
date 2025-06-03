@@ -1,0 +1,49 @@
+- name: Add PostgreSQL User on Kubernetes
+  hosts: postgresql
+  become: true
+  gather_facts: false
+  vars:
+    kubeconfig_src: /etc/rancher/k3s/k3s.yaml
+    kubeconfig_dest: /home/rocky/.kube/config
+    postgres_label_selector: "app=postgres"
+    postgres_user: postgres
+    db_username: "{{ db_user }}"
+    db_password: "{{ db_pass }}"
+    db_roles: "{{ db_roles | default([]) }}"
+
+  tasks:
+    - name: Ensure ~/.kube directory exists
+      file:
+        path: /home/rocky/.kube
+        state: directory
+        owner: rocky
+        group: rocky
+        mode: '0755'
+
+    - name: Copy kubeconfig if missing
+      copy:
+        src: "{{ kubeconfig_src }}"
+        dest: "{{ kubeconfig_dest }}"
+        remote_src: yes
+        owner: rocky
+        group: rocky
+        mode: '0644'
+      when: not lookup('ansible.builtin.stat', kubeconfig_dest).stat.exists
+
+
+    - name: Get PostgreSQL pod name
+      shell: >
+        /usr/local/bin/k3s kubectl get pods -l {{ postgres_label_selector }} -o jsonpath='{.items[0].metadata.name}'
+      register: postgres_pod_name
+      changed_when: false
+
+    - name: Build user creation SQL
+      set_fact:
+        create_user_sql: >
+          CREATE USER {{ db_username }} WITH PASSWORD '{{ db_password }}' {{ db_roles | join(' ') }};
+
+    - name: Add user to PostgreSQL
+      shell: >
+        /usr/local/bin/k3s kubectl --kubeconfig {{ kubeconfig_dest }}
+        exec {{ postgres_pod_name.stdout }} -- bash -c
+        'psql -U {{ postgres_user }} -c "{{ create_user_sql }}"'

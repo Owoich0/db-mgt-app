@@ -1,0 +1,54 @@
+- name: Create etcd system user
+  user:
+    name: etcd
+    system: yes
+    shell: /sbin/nologin
+    home: /var/lib/etcd
+
+- name: Create etcd directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: etcd
+    group: etcd
+    mode: '0755'
+  loop:
+    - /etc/etcd
+    - /var/lib/etcd
+
+- name: Download etcd
+  get_url:
+    url: https://github.com/etcd-io/etcd/releases/download/v3.5.17/etcd-v3.5.17-linux-amd64.tar.gz
+    dest: /tmp/etcd.tar.gz
+
+- name: Extract etcd binaries
+  unarchive:
+    src: /tmp/etcd.tar.gz
+    dest: /tmp
+    remote_src: yes
+
+- name: Move etcd binaries to /usr/local/bin
+  copy:
+    remote_src: yes
+    src: "/tmp/etcd-v3.5.17-linux-amd64/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: '0755'
+  loop:
+    - etcd
+    - etcdctl
+
+- name: Deploy etcd environment config
+  template:
+    src: etcd.env.j2
+    dest: /etc/etcd/etcd.env
+    owner: etcd
+    group: etcd
+    mode: '0644'
+
+- name: Deploy etcd systemd service
+  template:
+    src: etcd.service
+    dest: /etc/systemd/system/etcd.service
+    owner: root
+    group: root
+    mode: '0644'

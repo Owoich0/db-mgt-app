@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Stop Standalone Instance</title>
+  <style>
+    body { font-family: sans-serif; background: #f0f0f0; padding: 40px; }
+    .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    label, select, button { display: block; width: 100%; margin-top: 10px; padding: 8px; }
+    button { background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #a71d2a; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Stop PostgreSQL Instance/Cluster</h2>
+    <select id="cluster">
+      <option value="">Loading...</option>
+    </select>
+    <button onclick="stopInstance()">Stop Instance</button>
+    <p id="message"></p>
+  </div>
+
+  <script>
+    async function loadClusters() {
+      const res = await fetch("http://localhost:8000/clusters");
+      const data = await res.json();
+      const select = document.getElementById("cluster");
+      select.innerHTML = "<option value=''>Select Cluster/Instance</option>";
+      data.forEach(c => {
+        if (c.status === "completed") {
+          const opt = document.createElement("option");
+          opt.value = c.name;
+          opt.textContent = c.name;
+          select.appendChild(opt);
+        }
+      });
+    }
+
+    async function stopInstance() {
+      const cluster = document.getElementById("cluster").value;
+      const msg = document.getElementById("message");
+      if (!cluster) {
+        msg.textContent = "Please select a cluster.";
+        return;
+      }
+
+      msg.textContent = "Sending stop command...";
+
+      const res = await fetch("http://localhost:8000/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cluster_name: cluster })
+      });
+
+      const result = await res.json();
+      msg.textContent = res.ok ? result.message : `Error: ${result.detail || result.message}`;
+    }
+
+    document.addEventListener("DOMContentLoaded", loadClusters);
+  </script>
+</body>
+</html>

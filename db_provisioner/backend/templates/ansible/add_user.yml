@@ -1,0 +1,9 @@
+- hosts: postgresql
+  become: true
+  tasks:
+    - name: Add PostgreSQL user with roles
+      become_user: postgres
+      vars:
+        create_sql: "CREATE USER {{ db_user }} WITH PASSWORD '{{ db_pass }}' {{ db_roles | default('LOGIN') }};"
+      shell: |
+        psql -d {{ db_name }} -c "{{ create_sql }}"

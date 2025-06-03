@@ -1,0 +1,15 @@
+[Unit]
+Description=Patroni PostgreSQL HA Cluster
+After=network.target
+
+[Service]
+Type=simple
+User=postgres
+Group=postgres
+ExecStart=/usr/local/bin/patroni /etc/patroni/config.yml
+Restart=always
+RestartSec=5
+LimitNOFILE=10240
+
+[Install]
+WantedBy=multi-user.target

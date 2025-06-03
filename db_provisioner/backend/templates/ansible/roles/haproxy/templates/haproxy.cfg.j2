@@ -1,0 +1,45 @@
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    daemon
+    maxconn 2048
+
+defaults
+    log     global
+    mode    tcp
+    option  tcplog
+    option  dontlognull
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+    retries 3
+
+frontend postgres_frontend
+    bind *:5433
+    default_backend postgres_primary
+
+# Frontend for read-only traffic
+frontend postgres_read
+    bind *:5434
+    default_backend postgres_replicas
+
+# Backend for the primary node (leader only)
+backend postgres_primary
+    mode tcp
+    option tcp-check
+    option httpchk GET /primary
+    http-check expect status 200
+{% for host in groups['postgresql'] %}
+    server {{ host }} {{ hostvars[host]['private_ip'] }}:5432 check port 8008
+{% endfor %}
+
+# Backend for replicas (read-only connections)
+backend postgres_replicas
+    mode tcp
+    option tcp-check
+    option httpchk GET /replica
+    http-check expect status 200
+{% for host in groups['postgresql'] %}
+    server {{ host }} {{ hostvars[host]['private_ip'] }}:5432 check port 8008
+{% endfor %}
+

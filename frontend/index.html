@@ -1,0 +1,546 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Database Lifecycle Manager</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f0f0f0;
+      padding: 40px;
+    }
+    .container {
+      max-width: 700px;
+      margin: auto;
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+    h2 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    h3 {
+      margin-top: 30px;
+      color: #333;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 5px;
+    }
+    .button-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+    button {
+      padding: 10px;
+      font-size: 16px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .btn { background: #007BFF; color: white; }
+    .btn:hover { background: #0056b3; }
+    .btn-danger { background: #dc3545; }
+    .btn-danger:hover { background: #a71d2a; }
+    select, input {
+      padding: 8px;
+      margin-top: 5px;
+      margin-bottom: 10px;
+      width: 100%;
+    }
+    #connection-info, #instanceStatus {
+      margin-top: 10px;
+      background: #f9f9f9;
+      padding: 10px;
+      border-radius: 5px;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Database Lifecycle Manager</h2>
+
+    <h3>Provisioning</h3>
+    <div class="button-group">
+      <button class="btn" onclick="go('provision')">Provision Cluster</button>
+    </div>
+
+    <h3>Connect to Cluster</h3>
+    <label for="clusterSelect">Select Cluster</label>
+    <select id="clusterSelect">
+      <option value="">-- Loading Clusters --</option>
+    </select>
+    <button class="btn" onclick="getConnectionInfo()">Get Connection Info</button>
+    <div id="connection-info"></div>
+
+    <h3>Instance Controls</h3>
+    <label for="instanceSelect">Select Standalone Instance</label>
+    <select id="instanceSelect">
+      <option value="">-- Loading Standalone Instances --</option>
+    </select>
+    <div class="button-group">
+      <button class="btn" onclick="checkStatus()">Check Status</button>
+      <button class="btn" id="startBtn" onclick="startStandalone()">Start</button>
+      <button class="btn" id="stopBtn" onclick="stopStandalone()">Stop</button>
+    </div>
+    <div id="instanceStatus"></div>
+
+    <h3>Create a Database</h3>
+    <label for="dbClusterSelect">Select Cluster</label>
+    <select id="dbClusterSelect">
+      <option value="">-- Select Cluster --</option>
+    </select>
+    <label for="newDbName">Database Name</label>
+    <input type="text" id="newDbName" placeholder="Enter new DB name">
+    <button class="btn" onclick="createDatabase()">Create Database</button>
+    <p id="dbCreateMessage"></p>
+
+    <h3>Drop a Database</h3>
+    <label for="dropDbClusterSelect">Select Cluster</label>
+    <select id="dropDbClusterSelect" onchange="fetchDatabasesForCluster(this.value)">
+      <option value="">-- Select Cluster --</option>
+    </select>
+    <label for="dropDbSelect">Select Database</label>
+    <select id="dropDbSelect">
+      <option value="" disabled selected>-- Select Database --</option>
+    </select>
+    <button class="btn-danger" onclick="dropDatabase()">Drop Database</button>
+    <p id="dropDbMessage"></p>
+
+    <h3>Decommission Cluster</h3>
+    <label for="decomClusterSelect">Select Standalone Cluster</label>
+    <select id="decomClusterSelect">
+      <option value="">-- Loading Instances --</option>
+    </select>
+    <button class="btn-danger" onclick="decommissionCluster()">Decommission</button>
+    <p id="decomMessage"></p>
+
+    <h3>User Management</h3>
+    <label for="userClusterSelect">Select Cluster</label>
+    <select id="userClusterSelect">
+      <option value="">-- Select Cluster --</option>
+    </select>
+
+    <label for="usernameInput">Username</label>
+    <input type="text" id="usernameInput" placeholder="Enter username">
+
+    <label for="passwordInput">Password</label>
+    <input type="password" id="passwordInput" placeholder="Enter password">
+
+    <label for="roleSelect">Roles</label>
+    <select id="roleSelect" multiple>
+      <option value="LOGIN">LOGIN</option>
+      <option value="CREATEDB">CREATEDB</option>
+      <option value="REPLICATION">REPLICATION</option>
+    </select>
+
+    <div class="button-group">
+      <button class="btn" onclick="addUser()">Add User</button>
+      <button class="btn-danger" onclick="removeUser()">Remove User</button>
+    </div>
+    <p id="userMessage"></p>
+  </div>
+
+  <script>
+    function go(action) {
+      window.location.href = `${action}.html`;
+    }
+
+
+    let clusterMetadata = {};
+
+    async function loadClusters() {
+      try {
+        const res = await fetch("http://localhost:8000/clusters");
+        const clusters = await res.json();
+        clusterMetadata = {};
+
+        const selects = [
+          document.getElementById("clusterSelect"),
+          document.getElementById("dbClusterSelect"),
+          document.getElementById("dropDbClusterSelect"),
+          document.getElementById("userClusterSelect")
+        ];
+
+        selects.forEach(select => {
+          select.innerHTML = `<option value="">-- Select Cluster --</option>`;
+          clusters.forEach(c => {
+            clusterMetadata[c.name] = c;
+            const opt = document.createElement("option");
+            opt.value = c.name;
+            opt.textContent = `${c.name} (${c.status}, ${c.platform})`;
+            select.appendChild(opt);
+          });
+        });
+      } catch (err) {
+        console.error("Failed to load clusters:", err);
+      }
+    }
+
+    async function loadStandaloneClusters() {
+      try {
+        const res = await fetch("http://localhost:8000/standalone_clusters");
+        const clusters = await res.json();
+        const selects = [
+          document.getElementById("instanceSelect"),
+          document.getElementById("decomClusterSelect")
+        ];
+        selects.forEach(select => {
+          select.innerHTML = `<option value="">-- Select Instance --</option>`;
+          clusters.forEach(c => {
+            const opt = document.createElement("option");
+            opt.value = c.name;
+            opt.textContent = `${c.name} (${c.status}, ${c.platform})`;
+            select.appendChild(opt);
+          });
+        });
+      } catch (err) {
+        console.error("Failed to load standalone clusters:", err);
+      }
+    }
+
+  async function getConnectionInfo() {
+    const cluster = document.getElementById("clusterSelect").value;
+    const infoDiv = document.getElementById("connection-info");
+    infoDiv.textContent = "Fetching connection details...";
+
+    if (!cluster) {
+      infoDiv.textContent = "Please select a cluster.";
+      return;
+    }
+
+    try {
+      const res = await fetch(`http://localhost:8000/clusters/${cluster}/connection_info`);
+      const data = await res.json();
+      if (res.ok) {
+        infoDiv.innerHTML = `
+          <strong>Host:</strong> ${data.public_ip || 'N/A'}<br>
+          <strong>Port:</strong> ${data.port}<br>
+          <strong>Username:</strong> ${data.user}<br>
+          <strong>Password:</strong> ${data.password}<br>
+          <strong>Database:</strong> ${data.dbname}<br>
+          <strong>Platform:</strong> ${data.platform || 'N/A'}
+        `;
+    } else {
+      infoDiv.textContent = `Error: ${data.detail || "Could not fetch connection info"}`;
+      }
+    } catch (err) {
+    infoDiv.textContent = "Failed to connect to backend.";
+    console.error(err);
+  }
+}
+
+
+async function checkStatus() {
+  const cluster = document.getElementById("instanceSelect").value;
+  const output = document.getElementById("instanceStatus");
+
+  if (!cluster) {
+    output.textContent = "Please select an instance.";
+    return;
+  }
+
+  const platform = clusterMetadata[cluster]?.platform || "ec2";
+  output.textContent = "Checking...";
+
+  try {
+    const res = await fetch(`http://localhost:8000/status/${cluster}`);
+    const data = await res.json();
+
+    if (res.ok) {
+      if (platform === "kubernetes") {
+        output.innerHTML = `<strong>Instance Status:</strong> ${data.is_running || 'unknown'}`;
+      } else {
+        output.innerHTML = `<strong>Running:</strong> ${data.is_running}`;
+      }
+    } else {
+      output.textContent = `Error: ${data.detail || "Could not fetch status"}`;
+    }
+  } catch (err) {
+    output.textContent = "Failed to get status.";
+    console.error(err);
+  }
+}
+
+async function stopStandalone() {
+  const cluster = document.getElementById("instanceSelect").value;
+  const output = document.getElementById("instanceStatus");
+
+  if (!cluster) {
+    output.textContent = "Please select an instance.";
+    return;
+  }
+
+  const metadata = clusterMetadata[cluster];
+  if (!metadata) {
+    output.textContent = "Cluster metadata not found.";
+    return;
+  }
+
+  let stopPod = false;
+  let stopServer = false;
+
+  // KUBERNETES LOGIC
+  if (metadata.platform === "kubernetes") {
+    const stopPodConfirm = confirm("Do you want to stop the PostgreSQL pod?");
+    if (!stopPodConfirm) {
+      output.textContent = "Operation cancelled by user.";
+      return;  // Exit early
+    }
+    stopPod = true;
+
+    const stopServerConfirm = confirm("Do you want to stop the EC2 server?");
+    stopServer = stopServerConfirm; // true if OK, false if Cancel
+  } else {
+    // EC2 BARE INSTANCE LOGIC
+    const stopDBConfirm = confirm("Do you want to stop the PostgreSQL service?");
+    if (!stopDBConfirm) {
+      output.textContent = "Operation cancelled by user.";
+      return;  // Exit early
+    }
+
+    stopPod = true;  // Using same flag for DB service
+
+    const stopServerPrompt = window.prompt("Do you want to stop the EC2 server as well? (yes/no)");
+    if (!stopServerPrompt || stopServerPrompt.toLowerCase() !== "yes") {
+      stopServer = false;
+    } else {
+      stopServer = true;
+    }
+  }
+
+  output.textContent = "Stopping...";
+
+  try {
+    const res = await fetch("http://localhost:8000/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cluster_name: cluster,
+        stop_pod: stopPod,
+        stop_server: stopServer
+      })
+    });
+
+    const result = await res.json();
+    output.textContent = res.ok
+      ? result.message
+      : `Error: ${result.detail || result.message}`;
+  } catch (err) {
+    output.textContent = "Failed to stop instance.";
+    console.error(err);
+  }
+}
+
+
+
+async function startStandalone() {
+      const cluster = document.getElementById("instanceSelect").value;
+      const output = document.getElementById("instanceStatus");
+
+      if (!cluster) {
+        output.textContent = "Please select an instance.";
+        return;
+      }
+
+      output.textContent = "Starting...";
+      try {
+        const res = await fetch("http://localhost:8000/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cluster_name: cluster })
+        });
+        const result = await res.json();
+        output.textContent = res.ok ? result.message : `Error: ${result.detail || result.message}`;
+      } catch (err) {
+        output.textContent = "Failed to start instance.";
+        console.error(err);
+      }
+    }
+
+    async function createDatabase() {
+      const cluster = document.getElementById("dbClusterSelect").value;
+      const dbName = document.getElementById("newDbName").value;
+      const msg = document.getElementById("dbCreateMessage");
+
+      if (!cluster || !dbName) {
+        msg.textContent = "Please select a cluster and provide a database name.";
+        return;
+      }
+
+      msg.textContent = "Creating database...";
+      try {
+        const res = await fetch("http://localhost:8000/create_database", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cluster_name: cluster, db_name: dbName })
+        });
+        const result = await res.json();
+        msg.textContent = res.ok ? result.message : `Error: ${result.detail || result.message}`;
+      } catch (err) {
+        msg.textContent = "Failed to create database.";
+        console.error(err);
+      }
+    }
+
+
+
+    async function fetchDatabasesForCluster(clusterName) {
+      const select = document.getElementById("dropDbSelect");
+      select.innerHTML = `<option disabled selected>-- Loading --</option>`;
+
+      try {
+        const res = await fetch(`http://localhost:8000/clusters/${clusterName}/databases`);
+        const data = await res.json();
+
+        if (res.ok && Array.isArray(data.databases) && data.databases.length > 0) {
+          const cleaned = data.databases.map(db => db.trim()).filter(Boolean);
+
+          if (cleaned.length > 0) {
+            select.innerHTML = `<option disabled selected>-- Select Database --</option>`;
+            cleaned.forEach(db => {
+              const opt = document.createElement("option");
+              opt.value = db;
+              opt.textContent = db;
+              select.appendChild(opt);
+            });
+          } else {
+            select.innerHTML = `<option disabled selected>No databases found</option>`;
+          }
+        } else {
+          select.innerHTML = `<option disabled selected>No databases found</option>`;
+        }
+      } catch (err) {
+        console.error("Error fetching databases for cluster:", err);
+        select.innerHTML = `<option disabled selected>Error loading databases</option>`;
+      }
+    }
+
+
+    async function dropDatabase() {
+      const cluster = document.getElementById("dropDbClusterSelect").value;
+      const dbName = document.getElementById("dropDbSelect").value;
+      const msg = document.getElementById("dropDbMessage");
+
+      if (!cluster || !dbName) {
+        msg.textContent = "Please select a cluster and database to drop.";
+        return;
+      }
+
+      msg.textContent = "Dropping database...";
+      try {
+        const res = await fetch("http://localhost:8000/drop_database", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cluster_name: cluster, db_name: dbName })
+        });
+        const result = await res.json();
+        msg.textContent = res.ok ? result.message : `Error: ${result.detail || result.message}`;
+        if (res.ok) await fetchDatabasesForCluster(cluster);
+      } catch (err) {
+        msg.textContent = "Failed to drop database.";
+        console.error(err);
+      }
+    }
+
+    async function decommissionCluster() {
+      const cluster = document.getElementById("decomClusterSelect").value;
+      const msg = document.getElementById("decomMessage");
+
+      if (!cluster) {
+        msg.textContent = "Please select a cluster to decommission.";
+        return;
+      }
+
+      msg.textContent = "Decommissioning...";
+      try {
+        const res = await fetch("http://localhost:8000/decommission", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cluster_name: cluster })
+        });
+        const result = await res.json();
+        msg.textContent = res.ok ? result.message : `Error: ${result.detail || result.message}`;
+        if (res.ok) {
+          await loadClusters();
+          await loadStandaloneClusters();
+        }
+      } catch (err) {
+        msg.textContent = "Failed to decommission.";
+        console.error(err);
+      }
+    }
+
+    async function addUser() {
+      const cluster = document.getElementById("userClusterSelect").value;
+      const username = document.getElementById("usernameInput").value;
+      const password = document.getElementById("passwordInput").value;
+      const roles = Array.from(document.getElementById("roleSelect").selectedOptions).map(o => o.value);
+      const msg = document.getElementById("userMessage");
+
+      if (!cluster || !username || !password) {
+        msg.textContent = "Please fill in cluster, username, and password.";
+        return;
+      }
+
+      msg.textContent = "Adding user...";
+      try {
+        const res = await fetch("http://localhost:8000/add_user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cluster_name: cluster,
+            username: username,
+            password: password,
+            roles: roles
+          })
+        });
+
+        const result = await res.json();
+        msg.textContent = res.ok ? result.message : `Error: ${result.detail || result.message}`;
+      } catch (err) {
+        msg.textContent = "Failed to add user.";
+        console.error(err);
+      }
+    }
+
+    async function removeUser() {
+      const cluster = document.getElementById("userClusterSelect").value;
+      const username = document.getElementById("usernameInput").value;
+      const msg = document.getElementById("userMessage");
+
+      if (!cluster || !username) {
+        msg.textContent = "Please provide cluster and username.";
+        return;
+      }
+
+      msg.textContent = "Removing user...";
+      try {
+        const res = await fetch("http://localhost:8000/remove_user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cluster_name: cluster,
+            username: username
+          })
+        });
+
+        const result = await res.json();
+        msg.textContent = res.ok ? result.message : `Error: ${result.detail || result.message}`;
+      } catch (err) {
+        msg.textContent = "Failed to remove user.";
+        console.error(err);
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      loadClusters();
+      loadStandaloneClusters();
+    });
+  </script>
+</body>
+</html>

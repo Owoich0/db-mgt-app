@@ -1,0 +1,51 @@
+- name: Install dependencies (Debian/Ubuntu)
+  apt:
+    name: gnupg2
+    state: present
+    update_cache: yes
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Add pgBackRest APT key
+  apt_key:
+    url: https://pgbackrest.org/apt/pgbackrest.asc
+    state: present
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Add pgBackRest APT repository
+  apt_repository:
+    repo: "deb http://pgbackrest.org/apt/{{ ansible_distribution_release }} main"
+    state: present
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Install pgBackRest (Debian)
+  apt:
+    name: pgbackrest
+    state: present
+    update_cache: yes
+  when: ansible_facts['os_family'] == "Debian"
+
+# --- RHEL/Rocky/CentOS family ---
+- name: Add PostgreSQL global repo (RHEL)
+  yum:
+    name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+    state: present
+    disable_gpg_check: yes
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Install pgBackRest (RHEL)
+  yum:
+    name: pgbackrest
+    state: present
+  when: ansible_facts['os_family'] == "RedHat"
+
+
+- name: Create pgBackRest directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0750'
+  loop:
+    - /etc/pgbackrest
+    - /var/log/pgbackrest

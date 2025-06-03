@@ -1,0 +1,134 @@
+- name: Install K3s (lightweight Kubernetes)
+  shell: curl -sfL https://get.k3s.io | sh -
+  args:
+    creates: /usr/local/bin/k3s
+
+- name: Wait for Kubernetes to be ready
+  shell: /usr/local/bin/k3s kubectl get nodes
+  register: result
+  until: result.rc == 0
+  retries: 10
+  delay: 6
+
+- name: Pause after K3s setup
+  pause:
+    seconds: 10
+
+### ETCD SETUP ###
+
+- name: Template etcd service YAML
+  template:
+    src: etcd-service.yml.j2
+    dest: /tmp/etcd-service.yml
+
+- name: Apply etcd service
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/etcd-service.yml
+
+- name: Template etcd statefulset YAML
+  template:
+    src: etcd-statefulset.yml.j2
+    dest: /tmp/etcd-statefulset.yml
+
+- name: Apply etcd StatefulSet
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/etcd-statefulset.yml
+
+- name: Wait for etcd pod to be ready
+  shell: |
+    /usr/local/bin/k3s kubectl get pod -l app=etcd -o jsonpath="{.items[0].status.containerStatuses[0].ready}"
+  register: etcd_ready
+  until: etcd_ready.stdout == "true"
+  retries: 30
+  delay: 10
+
+
+- name: Pause before Patroni config setup
+  pause:
+    seconds: 5
+
+### PATRONI CONFIG ###
+
+- name: Create Patroni ConfigMap YAML
+  template:
+    src: patroni-configmap.yml.j2
+    dest: /tmp/patroni-configmap.yml
+
+- name: Apply Patroni ConfigMap
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/patroni-configmap.yml
+
+### PATRONI DEPLOYMENT ###
+
+- name: Template Patroni StatefulSet
+  template:
+    src: postgres-patroni-statefulset.yml.j2
+    dest: /tmp/postgres-patroni.yml
+
+- name: Apply Patroni StatefulSet
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/postgres-patroni.yml
+
+- name: Wait for Patroni pods to be ready
+  shell: /usr/local/bin/k3s kubectl rollout status statefulset patroni
+  retries: 15
+  delay: 10
+  register: patroni_status
+  until: patroni_status.rc == 0
+
+### POSTGRES SERVICE ###
+
+- name: Template Patroni Service
+  template:
+    src: postgres-service.yml.j2
+    dest: /tmp/postgres-service.yml
+
+- name: Apply Patroni Service
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/postgres-service.yml
+
+### HAPROXY ###
+
+- name: Template HAProxy ConfigMap
+  template:
+    src: haproxy-configmap.yml.j2
+    dest: /tmp/haproxy-configmap.yml
+
+- name: Apply HAProxy ConfigMap
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/haproxy-configmap.yml
+
+- name: Template HAProxy Deployment
+  template:
+    src: haproxy-deployment.yml.j2
+    dest: /tmp/haproxy.yml
+
+- name: Apply HAProxy Deployment
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/haproxy.yml
+
+- name: Wait for HAProxy pods to be ready
+  shell: /usr/local/bin/k3s kubectl rollout status deployment haproxy
+  retries: 10
+  delay: 6
+  register: haproxy_status
+  until: haproxy_status.rc == 0
+
+- name: Template HAProxy Service
+  template:
+    src: haproxy-service.yml.j2
+    dest: /tmp/haproxy-service.yml
+
+- name: Apply HAProxy Service
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/haproxy-service.yml
+
+######Keepalived ##
+
+- name: Template Keepalived config
+  template:
+    src: keepalived-configmap.yml.j2
+    dest: /tmp/keepalived-configmap.yml
+
+- name: Apply Keepalived ConfigMap
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/keepalived-configmap.yml
+
+- name: Template Keepalived DaemonSet
+  template:
+    src: keepalived-deployment.yml.j2
+    dest: /tmp/keepalived-deployment.yml
+
+- name: Deploy Keepalived
+  shell: /usr/local/bin/k3s kubectl apply -f /tmp/keepalived-deployment.yml

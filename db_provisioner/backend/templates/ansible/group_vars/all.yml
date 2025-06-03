@@ -1,0 +1,49 @@
+postgresql_version: {{ postgresql_version }}
+etcd_version: "3.5.17"
+
+postgres_data_device: "/dev/nvme2n1"
+postgres_wal_device: "/dev/nvme0n1"
+data_mount_point: "/var/lib/pgsql/data"
+wal_mount_point: "/var/lib/pgsql/wal"
+
+
+keepalived_auth_pass: TrO6g7i0PkeN24NQ
+keepalived_virtual_ip: {{ keepalived_virtual_ip }}
+
+haproxy_listen_port: 5433
+postgres_port: 5432
+
+pgbackrest_s3_bucket: terra-remote-backend-s3
+pgbackrest_s3_endpoint: s3.amazonaws.com
+pgbackrest_s3_region: us-east-1
+pgbackrest_s3_verify_ssl: y
+pgbackrest_retention_full: 2
+pgbackrest_retention_diff: 7
+
+cluster_output_summary: {}
+
+instance_count: {{ instance_count }}
+
+allowed_ips:
+  - "{{ allowed_ips[0] }}"
+  - "{{ allowed_ips[1] }}"
+allowed_ip_1: "{{ allowed_ips[0] }}"
+allowed_ip_2: "{{ allowed_ips[1] }}"
+server_public_ip: "{{ server_public_ip }}"
+
+pgbackrest_stanza: "{{ cluster_name }}"
+
+cluster_name: "{{ cluster_name }}"
+
+platform: {{ platform }}
+
+pod_count: {{ pod_count }}
+
+patroni_superuser_password: "33uuFHbYz3XgTYOQl"
+patroni_replication_password: "RrBaCtTBEW6VxDvRKZBcKlVIz"
+patroni_replication_user: "replicator"
+patroni_replication_username: replicator
+aws_access_key_id: sample
+aws_secret_access_key: sample
+k8s_node_count: {{ k8s_node_count | default(1) }}
+postgres_storage_size: 10

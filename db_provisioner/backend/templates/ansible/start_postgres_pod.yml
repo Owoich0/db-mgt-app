@@ -1,0 +1,56 @@
+---
+- name: Update IP and start PostgreSQL pod
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+
+  tasks:
+    - name: Get latest public IP from AWS
+      shell: |
+        aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values={{ cluster_name }}-node-1" \
+          --query "Reservations[].Instances[].PublicIpAddress" \
+          --output text
+      register: public_ip_result
+
+    - name: Set new public IP
+      set_fact:
+        new_public_ip: "{{ public_ip_result.stdout | trim }}"
+
+    - name: Update ansible_host IP only for this host
+      lineinfile:
+        path: inventory/inventory.ini
+        regexp: '^({{ inventory_hostname }} .*ansible_host=)[^ ]+'
+        line: '\1{{ new_public_ip }}'
+        backrefs: yes
+
+    - name: Update public_ip_1 in SQLite DB
+      delegate_to: localhost
+      run_once: true
+      shell: >
+        python3 -c "import sqlite3; conn = sqlite3.connect('/Users/mac/Documents/E-Library/Automation/dbLifeMgt/db_provisioner/backend/clusters.db'); cursor = conn.cursor(); cursor.execute('UPDATE clusters SET public_ip_1=? WHERE cluster_name=?', ('{{ new_public_ip }}', '{{ cluster_name }}')); conn.commit(); conn.close()"
+
+
+    - name: Wait for SSH to be available
+      wait_for:
+        port: 22
+        host: "{{ new_public_ip }}"
+        timeout: 180
+
+
+- name: Scale up PostgreSQL deployment to pod_count replica
+  hosts: postgresql
+  become: true
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: Scale deployment up
+      shell: /usr/local/bin/kubectl scale deployment postgres --replicas={{ pod_count }}
+      register: result
+      failed_when: result.rc != 0
+
+    - name: Confirm
+      debug:
+        msg: "PostgreSQL pod has been started (scaled to {{ pod_count }})"

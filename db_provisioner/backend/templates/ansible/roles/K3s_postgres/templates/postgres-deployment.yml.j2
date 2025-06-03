@@ -1,0 +1,118 @@
+# ConfigMap for optional PostgreSQL settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+data:
+  POSTGRES_DB: "postgres"
+  POSTGRES_USER: "postgres"
+  POSTGRES_PASSWORD: "{{ patroni_superuser_password }}"
+  PGBACKREST_REPO1_S3_BUCKET: "{{ pgbackrest_s3_bucket }}"
+  PGBACKREST_REPO1_S3_ENDPOINT: "{{ pgbackrest_s3_endpoint }}"
+  PGBACKREST_REPO1_S3_REGION: "{{ pgbackrest_s3_region }}"
+  PGBACKREST_REPO1_S3_VERIFY_SSL: "{{ pgbackrest_s3_verify_ssl }}"
+  PGBACKREST_STANZA: "{{ pgbackrest_stanza }}"
+
+---
+
+# PostgreSQL Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+    cluster: {{ cluster_name }}
+spec:
+  replicas: {{ pod_count | default(1) }}
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        cluster: {{ cluster_name }}
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:{{ postgresql_version }}
+        ports:
+        - containerPort: {{ postgres_port }}
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_PASSWORD
+        - name: PGBACKREST_REPO1_S3_KEY
+          value: "{{ aws_access_key_id }}"
+        - name: PGBACKREST_REPO1_S3_KEY_SECRET
+          value: "{{ aws_secret_access_key }}"
+        - name: PGBACKREST_REPO1_S3_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: PGBACKREST_REPO1_S3_BUCKET
+        - name: PGBACKREST_REPO1_S3_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: PGBACKREST_REPO1_S3_ENDPOINT
+        - name: PGBACKREST_REPO1_S3_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: PGBACKREST_REPO1_S3_REGION
+        - name: PGBACKREST_REPO1_S3_VERIFY_SSL
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: PGBACKREST_REPO1_S3_VERIFY_SSL
+        - name: PGBACKREST_STANZA
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: PGBACKREST_STANZA
+        - name: PGDATA
+          value: /var/lib/postgresql/data
+        volumeMounts:
+        - name: pgdata
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: pgdata
+        hostPath:
+          path: {{ data_mount_point }}
+          type: DirectoryOrCreate
+
+---
+
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  selector:
+    app: postgres
+  type: NodePort
+  ports:
+  - protocol: TCP
+    port: {{ postgres_port }}
+    targetPort: {{ postgres_port }}
+    nodePort: 30036  # Change if port conflict; optional

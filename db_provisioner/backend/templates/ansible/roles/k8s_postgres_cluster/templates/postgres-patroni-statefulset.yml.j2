@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: patroni
+spec:
+  serviceName: "patroni"
+  replicas: {{ pod_count | int }}
+  selector:
+    matchLabels:
+      app: patroni
+  template:
+    metadata:
+      labels:
+        app: patroni
+    spec:
+      containers:
+        - name: postgres
+          image: ongres/patroni:latest
+          command: ["patroni"]
+          args: ["/patroni.yaml"]
+          env:
+            - name: PATRONI_SCOPE
+              value: "{{ cluster_name }}"
+            - name: PATRONI_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: PATRONI_KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PATRONI_POSTGRESQL_PASSWORD
+              value: "{{ patroni_superuser_password }}"
+            - name: PATRONI_REPLICATION_USERNAME
+              value: "{{ patroni_replication_user }}"
+            - name: PATRONI_REPLICATION_PASSWORD
+              value: "{{ patroni_replication_password }}"
+            - name: PATRONI_ETCD_HOSTS
+              value: "http://etcd-0.etcd:2379,http://etcd-1.etcd:2379,http://etcd-2.etcd:2379"
+            - name: PATRONI_ETCD_PROTOCOL
+              value: "etcd3"
+          volumeMounts:
+            - name: pgdata
+              mountPath: /home/postgres/pgdata
+            - name: patroni-config
+              mountPath: /patroni.yaml
+              subPath: patroni.yaml
+
+        - name: pgbackrest
+          image: woblerr/pgbackrest:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              if [[ "$(hostname)" == "patroni-1" ]]; then
+                echo "Running backups from patroni-1";
+                pgbackrest stanza-create --stanza={{ pgbackrest_stanza }}
+                while true; do
+                  pgbackrest backup --stanza={{ pgbackrest_stanza }}
+                  sleep 3600
+                done
+              else
+                echo "Backup disabled on this node";
+                tail -f /dev/null
+          env:
+            - name: PGBACKREST_REPO1_TYPE
+              value: "s3"
+            - name: PGBACKREST_REPO1_S3_BUCKET
+              value: "{{ pgbackrest_s3_bucket }}"
+            - name: PGBACKREST_REPO1_S3_ENDPOINT
+              value: "{{ pgbackrest_s3_endpoint }}"
+            - name: PGBACKREST_REPO1_S3_REGION
+              value: "{{ pgbackrest_s3_region }}"
+            - name: PGBACKREST_REPO1_S3_KEY
+              value: "{{ aws_access_key_id }}"
+            - name: PGBACKREST_REPO1_S3_KEY_SECRET
+              value: "{{ aws_secret_access_key }}"
+            - name: PGBACKREST_REPO1_PATH
+              value: "{{ pgbackrest_stanza }}"
+            - name: PGBACKREST_LOG_LEVEL_CONSOLE
+              value: "info"
+          volumeMounts:
+            - name: pgdata
+              mountPath: /pgdata
+
+      volumes:
+        - name: patroni-config
+          configMap:
+            name: patroni-config
+
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ postgres_storage_size }}

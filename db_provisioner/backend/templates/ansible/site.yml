@@ -1,0 +1,148 @@
+- name: Kubernetes - Single Pod Postgres (when pod_count <= 1)
+  hosts: postgresql
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: Run K3s and single-pod Postgres deployment
+      import_role:
+        name: k3s_postgres
+      when:
+        - platform == "kubernetes"
+        - pod_count | int <= 1
+
+- name: Kubernetes - Scalable Postgres Cluster (when pod_count > 1)
+  hosts: postgresql
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: Run K3s and scalable Postgres cluster
+      import_role:
+        name: k8s_postgres_cluster
+      when:
+        - platform == "kubernetes"
+        - pod_count | int > 1
+
+# ========== Non-Kubernetes Only ==========
+
+- name: Common setup (bare metal only)
+  hosts: postgresql
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  roles:
+    - role: common
+      when: platform != "kubernetes"
+    - role: pgbackrest_install
+      when: platform != "kubernetes"
+
+- name: Postgres instance setup (bare metal only)
+  hosts: postgresql
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  roles:
+    - role: postgres
+      when: platform != "kubernetes"
+
+- name: pgBackRest for HA cluster (bare metal only)
+  hosts: postgresql
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: Run pgBackRest config role
+      import_role:
+        name: pgbackrest_config
+      when:
+        - instance_count | int > 1
+        - platform != "kubernetes"
+
+- name: Skip HA if single instance (bare metal only)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: "Skipping HA setup (only 1 instance requested)"
+      debug:
+        msg: "Skipping etcd, patroni, haproxy, keepalived setup because instance_count = {{ instance_count }}"
+      when:
+        - instance_count | int == 1
+        - platform != "kubernetes"
+
+- name: Etcd setup (bare metal only)
+  hosts: postgresql
+  become: true
+  serial: 1
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: Run etcd role
+      import_role:
+        name: etcd
+      when:
+        - instance_count | int > 1
+        - platform != "kubernetes"
+
+    - name: Prepare etcd
+      import_role:
+        name: etcd
+        tasks_from: prepare
+      when:
+        - instance_count | int > 1
+        - platform != "kubernetes"
+
+    - name: Start etcd
+      import_role:
+        name: etcd
+        tasks_from: start
+      when:
+        - instance_count | int > 1
+        - platform != "kubernetes"
+
+    - name: Check etcd health
+      import_role:
+        name: etcd
+        tasks_from: health
+      when:
+        - instance_count | int > 1
+        - platform != "kubernetes"
+
+- name: HA Stack (Patroni, HAProxy, Keepalived) (bare metal only)
+  hosts: postgresql
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - name: Run Patroni
+      import_role:
+        name: patroni
+      when:
+        - instance_count | int > 1
+        - platform != "kubernetes"
+
+    - name: Run HAProxy
+      import_role:
+        name: haproxy
+      when:
+        - instance_count | int > 1
+        - platform != "kubernetes"
+
+    - name: Run Keepalived
+      import_role:
+        name: keepalived
+      when:
+        - instance_count | int > 1
+        - platform != "kubernetes"
+
+# ========== Always Runs ==========
+
+- name: Post-cluster summary (always runs)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+  tasks:
+    - include_tasks: post_tasks.yml

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Provision PostgreSQL Cluster</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 40px;
+      background: #f0f0f0;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    label {
+      display: block;
+      margin-top: 10px;
+    }
+    input, select, button {
+      width: 100%;
+      padding: 8px;
+      margin-top: 4px;
+      margin-bottom: 10px;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .back-button {
+      position: absolute;
+      top: 20px;
+      left: 30px;
+      background: #007BFF;
+      color: white;
+      padding: 8px 14px;
+      text-decoration: none;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+    .back-button:hover {
+      background: #0056b3;
+    }
+  </style>
+</head>
+<body>
+  <a href="index.html" class="back-button">Back to Home</a>
+
+  <div class="container">
+    <h2>Provision PostgreSQL Cluster</h2>
+    <form id="provisionForm">
+      <label>Cluster Name</label>
+      <input type="text" id="cluster_name" required>
+
+      <label>Platform</label>
+      <select id="platform" onchange="handlePlatformChange()">
+        <option value="ec2">EC2 (Bare Metal)</option>
+        <option value="kubernetes">Kubernetes (in EC2)</option>
+      </select>
+
+      <label>Operating System (AMI)</label>
+      <select id="ami" onchange="updateInstanceTypes()">
+        <option value="ami-0a73e96a849c232cc">Rocky Linux</option>
+        <option value="ami-0c2b8ca1dad447f8a">Ubuntu</option>
+        <option value="ami-0de53d8956e8dcf80">Amazon Linux</option>
+        <option value="ami-08962a4068733a2b6">CentOS</option>
+      </select>
+
+      <label>Instance Type</label>
+      <select id="instance_type" required></select>
+
+      <label>Data Volume Size (GB)</label>
+      <input type="number" id="data_volume_size" value="50" min="1" required>
+
+      <label>PostgreSQL Version</label>
+      <select id="postgresql_version" required>
+        <option value="16">16</option>
+        <option value="15">15</option>
+        <option value="14">14</option>
+      </select>
+
+      <label>Number of Instances</label>
+      <select id="instance_count" required>
+        <option value="1">1</option>
+        <option value="3">3</option>
+        <option value="5">5</option>
+        <option value="7">7</option>
+        <option value="9">9</option>
+      </select>
+
+      <div id="podCountWrapper" style="display: none;">
+        <label>Number of Pods</label>
+        <select id="pod_count" required>
+          <option value="1">1</option>
+          <option value="3">3</option>
+          <option value="5">5</option>
+        </select>
+      </div>
+
+      <label>Allowed IP Address 1</label>
+      <input type="text" id="allowed_ip_1" placeholder="e.g. 192.168.1.100/32" required>
+
+      <label>Allowed IP Address 2</label>
+      <input type="text" id="allowed_ip_2" placeholder="e.g. 203.0.113.5/32" required>
+
+      <button type="submit">Provision</button>
+    </form>
+
+    <p id="message"></p>
+  </div>
+
+  <script>
+    const instanceOptions = {
+      "ami-0a73e96a849c232cc": ["t3.small", "t3.medium", "t3.large"],
+      "ami-0c2b8ca1dad447f8a": ["t3.micro", "t3.small", "t3.medium"],
+      "ami-0de53d8956e8dcf80": ["t3.micro", "t3.small", "t3.medium"],
+      "ami-08962a4068733a2b6": ["t3.micro", "t3.small", "t3.medium"]
+    };
+
+    function updateInstanceTypes() {
+      const ami = document.getElementById("ami").value;
+      const instanceTypeSelect = document.getElementById("instance_type");
+      instanceTypeSelect.innerHTML = "";
+      instanceOptions[ami].forEach(type => {
+        const option = document.createElement("option");
+        option.value = type;
+        option.textContent = type;
+        instanceTypeSelect.appendChild(option);
+      });
+    }
+
+    function handlePlatformChange() {
+      const platform = document.getElementById("platform").value;
+      const instanceCount = document.getElementById("instance_count");
+      const podCountWrapper = document.getElementById("podCountWrapper");
+
+      if (platform === "kubernetes") {
+        instanceCount.innerHTML = `
+        <option value="1">1</option>
+        <option value="3">3</option>
+        <option value="5">5</option>
+        `;
+        podCountWrapper.style.display = "block";
+      } else {
+        instanceCount.innerHTML = `
+          <option value="1">1</option>
+          <option value="3">3</option>
+          <option value="5">5</option>
+          <option value="7">7</option>
+          <option value="9">9</option>`;
+        podCountWrapper.style.display = "none";
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      updateInstanceTypes();
+    });
+
+    document.getElementById("provisionForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+
+      const msg = document.getElementById("message");
+      const platform = document.getElementById("platform").value;
+
+      const data = {
+        cluster_name: document.getElementById("cluster_name").value,
+        platform: platform,
+        instance_count: platform === "kubernetes"
+          ? 1
+          : parseInt(document.getElementById("instance_count").value),
+        pod_count: platform === "kubernetes"
+          ? parseInt(document.getElementById("pod_count").value)
+          : undefined,
+        postgresql_version: document.getElementById("postgresql_version").value,
+        ami: document.getElementById("ami").value,
+        instance_type: document.getElementById("instance_type").value,
+        data_volume_size: parseInt(document.getElementById("data_volume_size").value),
+        allowed_ip_1: document.getElementById("allowed_ip_1").value,
+        allowed_ip_2: document.getElementById("allowed_ip_2").value
+      };
+
+      if (!confirm(`Provision cluster '${data.cluster_name}' as ${platform.toUpperCase()}?`)) {
+        return;
+      }
+
+      msg.textContent = "Provisioning...";
+
+      try {
+        const res = await fetch("http://localhost:8000/deploy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data)
+        });
+
+        const result = await res.json();
+        msg.textContent = res.ok
+          ? `Provisioning Completed: ${result.cluster_name}`
+          : `Error: ${result.detail || result.message}`;
+      } catch (err) {
+        msg.textContent = "Failed to connect to backend.";
+        console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>

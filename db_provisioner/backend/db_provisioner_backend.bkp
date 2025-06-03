@@ -1,0 +1,661 @@
+import os
+import shutil
+import subprocess
+import sqlite3
+import requests
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from jinja2 import Environment, FileSystemLoader
+from datetime import datetime
+import re
+import ast
+import json
+import yaml
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class DeployRequest(BaseModel):
+    cluster_name: str
+    platform: str
+    instance_count: int
+    postgresql_version: str
+    ami: str
+    instance_type: str
+    data_volume_size: int
+    allowed_ip_1: str
+    allowed_ip_2: str
+
+class CreateDBRequest(BaseModel):
+    cluster_name: str
+    db_name: str
+
+class DropDBRequest(BaseModel):
+    cluster_name: str
+    db_name: str
+
+class StartRequest(BaseModel):
+    cluster_name: str
+
+class DecommissionRequest(BaseModel):
+    cluster_name: str
+
+class AddUserRequest(BaseModel):
+    cluster_name: str
+    username: str
+    password: str
+    database: str = "postgres"
+    roles: list[str] = []
+
+class RemoveUserRequest(BaseModel):
+    cluster_name: str
+    username: str
+
+OS_AMI_USER_MAPPING = {
+    "ami-0a73e96a849c232cc": "rocky",
+    "ami-0c2b8ca1dad447f8a": "ubuntu",
+    "ami-0de53d8956e8dcf80": "ec2-user",
+    "ami-08962a4068733a2b6": "centos"
+}
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
+DEPLOYMENTS_DIR = os.path.join(BASE_DIR, "deployments")
+db_path = os.path.join(BASE_DIR, "clusters.db")
+env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+
+def init_db():
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS clusters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cluster_name TEXT,
+            platform TEXT,
+            status TEXT,
+            instance_count INTEGER,
+            ami TEXT,
+            instance_type TEXT,
+            data_volume_size INTEGER,
+            postgresql_version TEXT,
+            allowed_ip_1 TEXT,
+            allowed_ip_2 TEXT,
+            server_public_ip TEXT,
+            deployment_dir TEXT,
+            timestamp TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+@app.get("/os-options")
+def get_os_options():
+    return [{"ami": ami, "os": user} for ami, user in OS_AMI_USER_MAPPING.items()]
+
+@app.get("/pg-versions")
+def get_pg_versions():
+    return ["14", "15", "16"]
+
+@app.get("/clusters")
+def list_clusters():
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT cluster_name, status, timestamp FROM clusters")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"name": name, "status": status, "timestamp": ts} for name, status, ts in rows]
+
+@app.get("/clusters/{name}/connection_info")
+def get_connection_info(name: str):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT cluster_name FROM clusters WHERE cluster_name=?", (name,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    return {
+        "host": f"{name}-node-1",
+        "port": 5432,
+        "user": "postgres",
+        "password": "postgres",
+        "dbname": "postgres"
+    }
+
+@app.post("/deploy")
+def deploy_cluster(request: DeployRequest):
+    if request.instance_count > 5:
+        raise HTTPException(status_code=400, detail="Maximum 5 instances allowed.")
+
+    cluster_dir = os.path.join(DEPLOYMENTS_DIR, request.cluster_name)
+    if os.path.exists(cluster_dir):
+        raise HTTPException(status_code=409, detail="Cluster already exists.")
+
+    os.makedirs(cluster_dir, exist_ok=True)
+
+    try:
+        public_ip = requests.get("https://api.ipify.org").text.strip()
+
+        # Prepare paths
+        ansible_dst = os.path.join(cluster_dir, "ansible")
+        tf_module_dst = os.path.join(cluster_dir, "terraform", "modules", "postgres_ha")
+        tfvars_path = os.path.join(tf_module_dst, "terraform.tfvars")
+        groupvars_path = os.path.join(ansible_dst, "group_vars", "all.yml")
+
+        # Copy files
+        shutil.copytree(os.path.join(TEMPLATE_DIR, "ansible"), ansible_dst)
+        os.makedirs(os.path.dirname(tf_module_dst), exist_ok=True)
+        shutil.copytree(os.path.join(TEMPLATE_DIR, "terraform", "modules", "postgres_ha"), tf_module_dst)
+
+        # Render tfvars
+        tf_template = env.get_template("terraform/terraform.tfvars.j2")
+        ssh_user = OS_AMI_USER_MAPPING.get(request.ami, "rocky")
+        with open(tfvars_path, "w") as f:
+            f.write(tf_template.render(
+                cluster_name=request.cluster_name,
+                instance_count=request.instance_count,
+                postgres_version=request.postgresql_version,
+                ami=request.ami,
+                instance_type=request.instance_type,
+                data_volume_size=request.data_volume_size,
+                ssh_user=ssh_user,
+                key_name="ha-postgres-key",
+                public_key_path="~/.ssh/ha-postgres-key.pub",
+                allowed_ip_1=request.allowed_ip_1,
+                allowed_ip_2=request.allowed_ip_2,
+                server_public_ip=public_ip
+            ))
+
+        # Render group_vars/all.yml
+        groupvars_template = env.get_template("ansible/group_vars/all.yml")
+        with open(groupvars_path, "w") as f:
+            f.write(groupvars_template.render(
+                cluster_name=request.cluster_name,
+                postgresql_version=request.postgresql_version,
+                instance_count=request.instance_count,
+                allowed_ips=[request.allowed_ip_1, request.allowed_ip_2],
+                server_public_ip=public_ip
+            ))
+
+        # Save cluster info to DB
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO clusters (
+                cluster_name, platform, instance_count, status, timestamp,
+                deployment_dir, ami, instance_type, data_volume_size,
+                postgresql_version, allowed_ip_1, allowed_ip_2, server_public_ip
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            request.cluster_name, request.platform, request.instance_count,
+            "in_progress", datetime.utcnow().isoformat(), cluster_dir,
+            request.ami, request.instance_type, request.data_volume_size,
+            request.postgresql_version, request.allowed_ip_1, request.allowed_ip_2,
+            public_ip
+        ))
+        conn.commit()
+        conn.close()
+
+        # Terraform provisioning
+        subprocess.run(["terraform", "init"], cwd=tf_module_dst, check=True)
+        subprocess.run(["terraform", "apply", "-auto-approve"], cwd=tf_module_dst, check=True)
+
+        # Terraform output parsing
+        output_result = subprocess.run(
+            ["terraform", "output", "-json"], cwd=tf_module_dst,
+            capture_output=True, text=True, check=True
+        )
+        tf_outputs = json.loads(output_result.stdout)
+
+        node_ips = tf_outputs.get("node_ips", {}).get("value", [])
+        public_ips = tf_outputs.get("public_ips", {}).get("value", [])
+
+        # Load group_vars to get passwords etc.
+        with open(groupvars_path) as f:
+            raw_vars = f.read()
+            rendered = env.from_string(raw_vars).render(
+                cluster_name=request.cluster_name,
+                postgresql_version=request.postgresql_version,
+                instance_count=request.instance_count,
+                allowed_ips=[request.allowed_ip_1, request.allowed_ip_2],
+                server_public_ip=public_ip
+            )
+            vars_dict = yaml.safe_load(rendered)
+
+        cluster_info = {
+            "message": "Cluster provisioned successfully",
+            "cluster_name": request.cluster_name,
+            "platform": request.platform,
+            "instance_count": request.instance_count,
+            "external_access": {
+                "public_ip": public_ip
+            },
+            "keepalived": {
+                "auth_pass": vars_dict.get("keepalived_auth_pass"),
+                "virtual_ip": vars_dict.get("keepalived_virtual_ip")
+            },
+            "haproxy": {
+                "listen_port": vars_dict.get("haproxy_listen_port")
+            },
+            "postgresql": {
+                "port": vars_dict.get("postgres_port"),
+                "superuser_password": vars_dict.get("patroni_superuser_password"),
+                "replication_user": vars_dict.get("patroni_replication_username"),
+                "replication_password": vars_dict.get("patroni_replication_password")
+            },
+            "nodes": []
+        }
+
+        for i, (priv_ip, pub_ip) in enumerate(zip(node_ips, public_ips)):
+            cluster_info["nodes"].append({
+                "name": f"{request.cluster_name}-node-{i+1}",
+                "private_ip": priv_ip,
+                "public_ip": pub_ip,
+                "patroni_api": f"http://{priv_ip}:8008"
+            })
+
+        # Monitoring (assume last node handles Prometheus + Grafana)
+        if public_ips:
+            cluster_info["monitoring"] = {
+                "prometheus": f"http://{public_ips[-1]}:9090",
+                "grafana": f"http://{public_ips[-1]}:3000"
+            }
+
+        # Update DB to completed
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE clusters SET status=? WHERE cluster_name=?", ("completed", request.cluster_name))
+        conn.commit()
+        conn.close()
+
+        return cluster_info
+
+    except Exception as e:
+        tf_exec_dir = os.path.join(cluster_dir, "terraform", "modules", "postgres_ha")
+        try:
+            if os.path.exists(tf_exec_dir):
+                subprocess.run(["terraform", "destroy", "-auto-approve"], cwd=tf_exec_dir, check=False)
+        except Exception as tf_err:
+            print(f"Terraform destroy failed during cleanup: {tf_err}")
+
+        shutil.rmtree(cluster_dir, ignore_errors=True)
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM clusters WHERE cluster_name=?", (request.cluster_name,))
+        conn.commit()
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Provisioning failed: {str(e)}")
+
+
+####Create Database######
+@app.post("/create_database")
+def create_database(request: CreateDBRequest):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT deployment_dir FROM clusters WHERE cluster_name=?", (request.cluster_name,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    deployment_dir = row[0]
+    ansible_dir = os.path.join(deployment_dir, "ansible")
+    inventory = os.path.join(ansible_dir, "inventory", "inventory.ini")
+    playbook = os.path.join(ansible_dir, "create_database.yml")
+
+    if not os.path.exists(playbook):
+        raise HTTPException(status_code=500, detail="Ansible create_database.yml not found")
+
+    try:
+        subprocess.run([
+            "ansible-playbook",
+            "-i", inventory,
+            playbook,
+            "-e", f"db_name={request.db_name}"
+        ], check=True)
+        return {"message": f"Database '{request.db_name}' created successfully"}
+    except subprocess.CalledProcessError:
+        raise HTTPException(status_code=500, detail="Failed to create database")
+
+@app.delete("/clusters/{name}")
+def delete_cluster(name: str):
+    cluster_dir = os.path.join(DEPLOYMENTS_DIR, name)
+    if not os.path.exists(cluster_dir):
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    try:
+        tf_exec_dir = os.path.join(cluster_dir, "terraform", "modules", "postgres_ha")
+        subprocess.run(["terraform", "destroy", "-auto-approve"], cwd=tf_exec_dir, check=True)
+        shutil.rmtree(cluster_dir, ignore_errors=True)
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM clusters WHERE cluster_name=?", (name,))
+        conn.commit()
+        conn.close()
+
+        return {"message": f"Cluster '{name}' deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Placeholder routes for full lifecycle management
+def placeholder_response(name):
+    return {"status": "not_implemented", "action": name}
+
+
+@app.get("/standalone_clusters")
+def list_standalone_clusters():
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT cluster_name, status, timestamp 
+        FROM clusters 
+        WHERE instance_count = 1
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"name": name, "status": status, "timestamp": ts} for name, status, ts in rows]
+
+
+@app.get("/status/{cluster_name}")
+def get_cluster_status(cluster_name: str):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM clusters WHERE cluster_name = ?", (cluster_name,))
+    row = cursor.fetchone()
+    columns = [col[0] for col in cursor.description]
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    cluster = dict(zip(columns, row))
+    deployment_dir = cluster["deployment_dir"]
+    ansible_dir = os.path.join(deployment_dir, "ansible")
+    inventory_file = os.path.join(ansible_dir, "inventory", "inventory.ini")
+    check_playbook = os.path.join(ansible_dir, "check_postgres_status.yml")
+
+    if not os.path.exists(check_playbook):
+        cluster["is_running"] = "unknown"
+        return cluster
+
+    try:
+        result = subprocess.run(
+            ["ansible-playbook", "-i", inventory_file, check_playbook],
+            capture_output=True,
+            text=True
+        )
+
+        def remove_warnings(output: str) -> str:
+            return "\n".join(
+                line for line in output.splitlines()
+                if not line.strip().startswith("[WARNING]")
+            )
+
+        clean_stdout = remove_warnings(result.stdout)
+        clean_stderr = remove_warnings(result.stderr)
+
+        # Normalize the Ansible output
+        stdout_lower = clean_stdout.lower()
+
+        if "is_running=true" in stdout_lower:
+            cluster["is_running"] = True
+        elif "is_running=false" in stdout_lower:
+            cluster["is_running"] = False
+        else:
+            cluster["is_running"] = "unknown"
+
+        if result.returncode != 0:
+            cluster["ansible_error"] = clean_stderr.strip() or clean_stdout.strip() or "Playbook failed"
+
+    except Exception as e:
+        cluster["is_running"] = "error"
+        cluster["ansible_error"] = str(e)
+
+    return cluster
+
+
+
+class StartRequest(BaseModel):
+    cluster_name: str
+
+@app.post("/start")
+def start_cluster(request: StartRequest):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT instance_count, deployment_dir FROM clusters WHERE cluster_name=?", (request.cluster_name,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    instance_count, deployment_dir = row
+    if instance_count > 1:
+        raise HTTPException(status_code=400, detail="Start only supported for standalone instances")
+
+    inventory_file = os.path.join(deployment_dir, "ansible", "inventory", "inventory.ini")
+    start_playbook = os.path.join(deployment_dir, "ansible", "start_instance.yml")
+
+    if not os.path.exists(start_playbook):
+        raise HTTPException(status_code=500, detail="Start playbook not found")
+
+    try:
+        subprocess.run(["ansible-playbook", "-i", inventory_file, start_playbook], check=True)
+        return {"message": f"{request.cluster_name} started successfully"}
+    except subprocess.CalledProcessError:
+        raise HTTPException(status_code=500, detail="Failed to start instance via Ansible")
+
+
+
+class StopRequest(BaseModel):
+    cluster_name: str
+
+@app.post("/stop")
+def stop_cluster(request: StopRequest):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT instance_count, deployment_dir FROM clusters WHERE cluster_name=?", (request.cluster_name,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    instance_count, deployment_dir = row
+    if instance_count > 1:
+        raise HTTPException(status_code=400, detail="Stop only supported for standalone instances")
+
+    inventory_file = os.path.join(deployment_dir, "ansible", "inventory", "inventory.ini")
+    shutdown_playbook = os.path.join(deployment_dir, "ansible", "stop_instance.yml")
+
+    if not os.path.exists(shutdown_playbook):
+        raise HTTPException(status_code=500, detail="Shutdown playbook not found")
+
+    try:
+        subprocess.run(["ansible-playbook", "-i", inventory_file, shutdown_playbook], check=True)
+        return {"message": f"{request.cluster_name} stopped successfully"}
+    except subprocess.CalledProcessError:
+        raise HTTPException(status_code=500, detail="Failed to stop instance via Ansible")
+
+
+
+@app.get("/clusters/{cluster_name}/databases")
+def list_databases(cluster_name: str):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT deployment_dir FROM clusters WHERE cluster_name=?", (cluster_name,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    deployment_dir = row[0]
+    ansible_dir = os.path.join(deployment_dir, "ansible")
+    inventory_file = os.path.join(ansible_dir, "inventory", "inventory.ini")
+    playbook_path = os.path.join(ansible_dir, "list_databases.yml")
+
+    if not os.path.exists(playbook_path):
+        raise HTTPException(status_code=500, detail="list_databases.yml not found")
+
+    try:
+        result = subprocess.run(
+            ["ansible-playbook", "-i", inventory_file, playbook_path],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        # Find the msg line that contains a Python list
+        match = re.search(r'"msg": (\[.*?\])', result.stdout, re.DOTALL)
+        if match:
+            dbs = ast.literal_eval(match.group(1))
+            return {"databases": dbs}
+        else:
+            return {"databases": []}
+
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail="Failed to list databases: " + e.stderr.strip())
+
+
+
+@app.post("/drop_database")
+def drop_database(request: DropDBRequest):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT deployment_dir FROM clusters WHERE cluster_name=?", (request.cluster_name,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    deployment_dir = row[0]
+    ansible_dir = os.path.join(deployment_dir, "ansible")
+    inventory = os.path.join(ansible_dir, "inventory", "inventory.ini")
+    playbook = os.path.join(ansible_dir, "drop_database.yml")
+
+    if not os.path.exists(playbook):
+        raise HTTPException(status_code=500, detail="Ansible drop_database.yml not found")
+
+    try:
+        subprocess.run([
+            "ansible-playbook",
+            "-i", inventory,
+            playbook,
+            "-e", f"db_name={request.db_name}"
+        ], check=True)
+        return {"message": f"Database '{request.db_name}' dropped successfully"}
+    except subprocess.CalledProcessError:
+        raise HTTPException(status_code=500, detail="Failed to drop database")
+
+
+@app.post("/decommission")
+def decommission_standalone(request: DecommissionRequest):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT instance_count, deployment_dir FROM clusters WHERE cluster_name=?", (request.cluster_name,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    instance_count, deployment_dir = row
+    if instance_count > 1:
+        raise HTTPException(status_code=400, detail="Decommission is only supported for standalone clusters")
+
+    tf_exec_dir = os.path.join(deployment_dir, "terraform", "modules", "postgres_ha")
+    if not os.path.exists(tf_exec_dir):
+        raise HTTPException(status_code=500, detail="Terraform path not found")
+
+    try:
+        subprocess.run(["terraform", "destroy", "-auto-approve"], cwd=tf_exec_dir, check=True)
+        shutil.rmtree(deployment_dir, ignore_errors=True)
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM clusters WHERE cluster_name=?", (request.cluster_name,))
+        conn.commit()
+        conn.close()
+
+        return {"message": f"Cluster '{request.cluster_name}' decommissioned successfully"}
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail="Terraform destroy failed")
+
+
+@app.post("/add_user")
+def add_user(request: AddUserRequest):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT deployment_dir FROM clusters WHERE cluster_name=?", (request.cluster_name,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    deployment_dir = row[0]
+    ansible_dir = os.path.join(deployment_dir, "ansible")
+    inventory = os.path.join(ansible_dir, "inventory", "inventory.ini")
+    playbook = os.path.join(ansible_dir, "add_user.yml")
+
+    if not os.path.exists(playbook):
+        raise HTTPException(status_code=500, detail="add_user.yml not found")
+
+    try:
+        subprocess.run([
+            "ansible-playbook", "-i", inventory, playbook,
+            "-e", f"db_user={request.username} db_pass={request.password} db_roles={','.join(request.roles)} db_name={request.database}"
+        ], check=True)
+        return {"message": f"User '{request.username}' added successfully"}
+    except subprocess.CalledProcessError:
+        raise HTTPException(status_code=500, detail="Failed to add user")
+
+
+@app.post("/remove_user")
+def remove_user(request: RemoveUserRequest):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT deployment_dir FROM clusters WHERE cluster_name=?", (request.cluster_name,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    deployment_dir = row[0]
+    ansible_dir = os.path.join(deployment_dir, "ansible")
+    inventory = os.path.join(ansible_dir, "inventory", "inventory.ini")
+    playbook = os.path.join(ansible_dir, "remove_user.yml")
+
+    if not os.path.exists(playbook):
+        raise HTTPException(status_code=500, detail="remove_user.yml not found")
+
+    try:
+        subprocess.run([
+            "ansible-playbook", "-i", inventory, playbook,
+            "-e", f"db_user={request.username}"
+        ], check=True)
+        return {"message": f"User '{request.username}' removed successfully"}
+    except subprocess.CalledProcessError:
+        raise HTTPException(status_code=500, detail="Failed to remove user")
+
+
+
+@app.post("/scale")
+def scale_cluster():
+    return placeholder_response("scale")

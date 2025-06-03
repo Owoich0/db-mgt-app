@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: haproxy
+spec:
+  selector:
+    app: haproxy
+  ports:
+    - protocol: TCP
+      port: {{ haproxy_listen_port }}
+      targetPort: {{ haproxy_listen_port }}
+  type: NodePort

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Scale Cluster</title>
+  <style>
+    body { font-family: sans-serif; background: #f0f0f0; padding: 40px; }
+    .container { max-width: 400px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    h2 { text-align: center; }
+    label { display: block; margin-top: 12px; }
+    input, button { width: 100%; padding: 8px; margin-top: 5px; margin-bottom: 15px; }
+    button { background: #6f42c1; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { background: #5936a2; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Scale Cluster</h2>
+    <form id="scaleForm">
+      <label>Cluster Name
+        <input type="text" name="name" required>
+      </label>
+      <label>New Number of Instances
+        <input type="number" name="instances" min="1" required>
+      </label>
+      <button type="submit">Scale Cluster</button>
+    </form>
+    <p id="message"></p>
+  </div>
+
+  <script>
+    document.getElementById("scaleForm").addEventListener("submit", async function(e) {
+      e.preventDefault();
+      const form = e.target;
+      const data = {
+        name: form.name.value,
+        instances: parseInt(form.instances.value)
+      };
+      const msg = document.getElementById("message");
+
+      msg.textContent = "Scaling cluster...";
+
+      try {
+        const res = await fetch("http://localhost:8000/scale", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(data)
+        });
+
+        const result = await res.json();
+        msg.textContent = res.ok ? `Cluster '${data.name}' scaled.` : `Error: ${result.detail}`;
+      } catch (err) {
+        msg.textContent = "Failed to send scale request.";
+      }
+    });
+  </script>
+</body>
+</html>

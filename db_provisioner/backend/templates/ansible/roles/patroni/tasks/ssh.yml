@@ -1,0 +1,54 @@
+
+- name: Generate SSH key for postgres if not exists
+  become: true
+  become_user: postgres
+  command: ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ''
+  args:
+    creates: ~/.ssh/id_ed25519
+
+- name: Read public key
+  become: true
+  become_user: postgres
+  slurp:
+    src: ~/.ssh/id_ed25519.pub
+  register: pubkey
+
+- name: Set fact for public key (per-host)
+  set_fact:
+    postgres_pubkey: "{{ pubkey.content | b64decode }}"
+
+- name: Build dictionary of all public keys on localhost
+  set_fact:
+    all_postgres_keys: >-
+      {{
+        dict(groups['postgresql'] | zip(
+          groups['postgresql'] | map('extract', hostvars, 'postgres_pubkey')
+        ))
+      }}
+  run_once: true
+  delegate_to: localhost
+
+- name: Distribute authorized_keys to all hosts
+  become: true
+  become_user: postgres
+  authorized_key:
+    user: postgres
+    key: "{{ hostvars[groups['postgresql'][0]]['all_postgres_keys'][item] }}"
+  loop: "{{ groups['postgresql'] }}"
+
+- name: Ensure default known_hosts file exists for postgres
+  become: true
+  become_user: postgres
+  file:
+    path: "~/.ssh/known_hosts"
+    state: touch
+    mode: '0600'
+
+- name: Add SSH host keys of all other cluster nodes to known_hosts
+  become: true
+  become_user: postgres
+  shell: |
+    ssh-keyscan -T 3 -H {{ item }} >> ~/.ssh/known_hosts || true
+  loop: "{{ groups['postgresql']
+           | map('extract', hostvars, 'private_ip')
+           | difference([ansible_default_ipv4.address]) }}"

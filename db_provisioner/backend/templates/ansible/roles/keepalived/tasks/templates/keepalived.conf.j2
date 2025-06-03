@@ -1,0 +1,29 @@
+global_defs {
+    enable_script_security
+    script_user keepalived_script
+}
+
+vrrp_script check_haproxy {
+    script "/etc/keepalived/check_haproxy.sh"
+    interval 2
+    fall 3
+    rise 2
+}
+
+vrrp_instance VI_1 {
+    state {{ 'MASTER' if inventory_hostname == groups['postgresql'][0] else 'BACKUP' }}
+    interface {{ ansible_default_ipv4.interface }}
+    virtual_router_id 51
+    priority {{ 100 - (groups['postgresql'].index(inventory_hostname) * 10) }}
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass {{ keepalived_auth_pass }}
+    }
+    virtual_ipaddress {
+        {{ keepalived_virtual_ip }}
+    }
+    track_script {
+        check_haproxy
+    }
+}

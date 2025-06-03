@@ -1,0 +1,13 @@
+# Render dynamic main.tf from config.j2
+template = env.get_template("terraform/config.j2")
+rendered_main_tf = template.render(
+    name=request.name,
+    instances=request.instances,
+    version=request.version,
+    backups=request.backups,
+    monitoring=request.monitoring
+)
+
+# Save it as main.tf in cluster deployment folder
+with open(os.path.join(cluster_dir, "main.tf"), "w") as f:
+    f.write(rendered_main_tf)

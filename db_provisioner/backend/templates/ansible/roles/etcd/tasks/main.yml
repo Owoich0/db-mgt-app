@@ -1,0 +1,10 @@
+- name: Etcd prepare phase
+  import_tasks: prepare.yml
+
+- name: Etcd start phase
+  import_tasks: start.yml
+
+- name: Etcd health check (after all nodes started)
+  import_tasks: health.yml
+  run_once: true  # Only check from one node to avoid race
+  delegate_to: "{{ groups['postgresql'][0] }}"

@@ -1,0 +1,59 @@
+# Terraform
+.terraform
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl 
+
+# Ansible
+db_provisioner/backend/deployments/
+*.retry
+*.log
+vault_pass.txt
+secrets.yml
+inventory/*.ini
+
+# Kubernetes
+*.yaml~
+.kube/
+*.kubeconfig
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+.env
+venv/
+.envrc
+
+# System
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*.tmp
+*.log
+*.db
+
+# Editor
+.vscode/
+.idea/
+*.code-workspace
+
+aws_credentials.yml
+*.pem
+*.key
+*.crt
+
+# Other
+*.tar.gz
+*.zip
+*.tgz
+*.gz

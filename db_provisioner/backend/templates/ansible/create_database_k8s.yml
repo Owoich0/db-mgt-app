@@ -1,0 +1,46 @@
+- name: Create PostgreSQL Database on Kubernetes
+  hosts: postgresql
+  become: true
+  gather_facts: false
+  vars:
+    kubeconfig_src: /etc/rancher/k3s/k3s.yaml
+    kubeconfig_dest: /home/rocky/.kube/config
+    postgres_label_selector: "app=postgres"
+    postgres_user: postgres
+
+  tasks:
+    - name: Ensure ~/.kube directory exists
+      file:
+        path: /home/rocky/.kube
+        state: directory
+        owner: rocky
+        group: rocky
+        mode: '0755'
+
+    - name: Check if kubeconfig already exists
+      stat:
+        path: "{{ kubeconfig_dest }}"
+      register: kubeconfig_stat
+
+    - name: Copy kubeconfig to user home if it doesn't exist
+      copy:
+        src: "{{ kubeconfig_src }}"
+        dest: "{{ kubeconfig_dest }}"
+        remote_src: yes
+        owner: rocky
+        group: rocky
+        mode: '0644'
+      when: not kubeconfig_stat.stat.exists
+
+    - name: Get PostgreSQL pod name
+      shell: >
+        /usr/local/bin/k3s kubectl get pods -l {{ postgres_label_selector }} -o jsonpath='{.items[0].metadata.name}'
+      register: postgres_pod_name
+      changed_when: false
+
+    - name: Create database {{ db_name }} inside pod
+      shell: >
+        /usr/local/bin/k3s kubectl exec -i {{ postgres_pod_name.stdout }} -- bash -c
+        "su - postgres -c 'psql -U {{ postgres_user }} -c \"CREATE DATABASE \\\"{{ db_name }}\\\";\"'"
+      environment:
+        PATH: "/usr/local/bin:{{ ansible_env.PATH }}"

@@ -1,0 +1,52 @@
+---
+- name: Stop EC2 instance
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+
+  tasks:
+    - name: Get instance ID and state (excluding terminated)
+      shell: |
+        aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values={{ cluster_name }}-node-1" \
+                    "Name=instance-state-name,Values=running,stopped" \
+          --query "Reservations[].Instances[].[InstanceId, State.Name, PublicIpAddress]" \
+          --output text
+      register: instance_info
+
+    - name: Parse instance info
+      set_fact:
+        instance_id: "{{ instance_info.stdout.split()[0] }}"
+        instance_state: "{{ instance_info.stdout.split()[1] | lower }}"
+        new_public_ip: "{{ instance_info.stdout.split()[2] }}"
+
+    - name: Update ansible_host IP only for this host
+      lineinfile:
+        path: inventory/inventory.ini
+        regexp: '^({{ inventory_hostname }} .*ansible_host=)[^ ]+'
+        line: '\1{{ new_public_ip }}'
+        backrefs: yes
+
+    - name: Update public_ip_1 in SQLite DB
+      delegate_to: localhost
+      run_once: true
+      shell: >
+        python3 -c "import sqlite3; conn = sqlite3.connect('/Users/mac/Documents/E-Library/Automation/dbLifeMgt/db_provisioner/backend/clusters.db'); cursor = conn.cursor(); cursor.execute('UPDATE clusters SET public_ip_1=? WHERE cluster_name=?', ('{{ new_public_ip }}', '{{ cluster_name }}')); conn.commit(); conn.close()"
+
+    - name: Print current instance state
+      debug:
+        msg: "Instance {{ instance_id }} is currently {{ instance_state }}"
+
+    - name: Fail if instance is already stopped
+      when: instance_state == 'stopped'
+      debug:
+        msg: "Instance is already stopped. Nothing to do."
+
+    - name: Stop EC2 instance if running
+      when: instance_state == 'running'
+      shell: aws ec2 stop-instances --instance-ids {{ instance_id }}
+
+    - name: Wait for instance to stop
+      when: instance_state == 'running'
+      shell: aws ec2 wait instance-stopped --instance-ids {{ instance_id }}

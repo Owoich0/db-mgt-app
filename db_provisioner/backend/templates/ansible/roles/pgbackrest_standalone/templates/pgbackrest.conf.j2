@@ -1,0 +1,19 @@
+[global]
+repo1-path=/{{ cluster_name }}/pgbackrest
+repo1-type=s3
+repo1-s3-bucket={{ pgbackrest_s3_bucket }}
+repo1-s3-endpoint=s3.amazonaws.com
+repo1-s3-key={{ aws_access_key_id }}
+repo1-s3-key-secret={{ aws_secret_access_key }}
+repo1-s3-region={{ pgbackrest_s3_region }}
+log-level-console=info
+log-level-file=debug
+
+[main]
+pg1-path={% if ansible_facts['os_family'] == 'RedHat' -%}
+/var/lib/pgsql/{{ postgresql_version }}/data
+{%- else -%}
+/var/lib/postgresql/{{ postgresql_version }}/main
+{%- endif %}
+
+

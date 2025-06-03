@@ -1,0 +1,16 @@
+- name: Generate standalone pgBackRest config
+  ansible.builtin.template:
+    src: pgbackrest.conf.j2
+    dest: /etc/pgbackrest/pgbackrest.conf
+    owner: postgres
+    group: postgres
+    mode: '0640'
+
+- name: Generate pgBackRest config
+  ansible.builtin.template:
+    src: pgbackrest.conf.j2
+    dest: /etc/pgbackrest.conf
+    owner: postgres
+    group: postgres
+    mode: '0640'
+
