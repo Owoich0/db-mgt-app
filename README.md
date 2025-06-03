@@ -22,9 +22,9 @@ A self-service platform to **provision**, **connect**, **manage**, and **decommi
 
 ## Requirements
 
-- Python 3.9+
+- Python
 - Terraform CLI
-- Ansible 2.10+
+- Ansible
 - AWS CLI (for EC2 + S3 access)
 - SQLite (pre-installed)
 - Docker (optional for local k3s setups)
