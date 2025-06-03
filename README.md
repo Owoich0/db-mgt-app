@@ -2,7 +2,8 @@
 ![k8](https://github.com/Owoich0/db-mgt-app/blob/main/hapr.jpg) ![bare](https://github.com/Owoich0/db-mgt-app/blob/main/REST.jpg)
 
 A self-service platform to **provision**, **connect**, **manage**, and **decommission** PostgreSQL instances and clusters across EC2(K8 and on host) environments.
-## 🛠️ Technologies Used
+
+## Technologies Used
 
 | Layer               | Technology                  |
 |---------------------|-----------------------------|
@@ -15,3 +16,15 @@ A self-service platform to **provision**, **connect**, **manage**, and **decommi
 | Backup              | pgBackRest (S3)             |
 | Kubernetes          | K3s                         |
 | State Management    | SQLite                      |
+
+
+
+
+## Requirements
+
+- Python 3.9+
+- Terraform CLI
+- Ansible 2.10+
+- AWS CLI (for EC2 + S3 access)
+- SQLite (pre-installed)
+- Docker (optional for local k3s setups)
