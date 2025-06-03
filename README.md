@@ -1,6 +1,6 @@
 # db-mgt-app
-![k8] (https://github.com/Owoich0/db-mgt-app/blob/main/hapr.jpg)
-![bare] (https://github.com/Owoich0/db-mgt-app/blob/main/REST.jpg)
+![k8](https://github.com/Owoich0/db-mgt-app/blob/main/hapr.jpg)
+![bare](https://github.com/Owoich0/db-mgt-app/blob/main/REST.jpg)
 
 A self-service platform to **provision**, **connect**, **manage**, and **decommission** PostgreSQL instances and clusters across EC2(K8 and on host) environments.
 ## 🛠️ Technologies Used
